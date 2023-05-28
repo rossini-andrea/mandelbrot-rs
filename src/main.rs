@@ -8,6 +8,8 @@ use sdl2::{
 use std::iter;
 use std::time::Duration;
 use mandelbrot::*;
+
+type Real = f32;
  
 pub fn main() {
     let sdl_context = sdl2::init().unwrap();
@@ -25,7 +27,7 @@ pub fn main() {
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
-    let (w, h) = canvas.output_size().unwrap();
+    let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -54,7 +56,7 @@ pub fn main() {
         }
 
         if resized {
-            let (w, h) = canvas.output_size().unwrap();
+            (w, h) = canvas.output_size().unwrap();
             println!("Window resized to {}x{}.", w, h);
             texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
             redraw = true;
@@ -62,6 +64,18 @@ pub fn main() {
 
         if redraw {
             canvas.clear();
+            texture.with_lock(None, |buf, pitch| -> () {
+                for y in 0..usize::try_from(h).unwrap() {
+                    for x in 0..usize::try_from(w).unwrap() {
+                        let pixel_index: usize = pitch * y + x * 3;
+                        (
+                            buf[pixel_index],
+                            buf[pixel_index + 1],
+                            buf[pixel_index + 2]
+                        ) = (127, 100, 127);
+                    }
+                }
+            });
             canvas.copy(&texture, None, None);
             canvas.present();
         }
