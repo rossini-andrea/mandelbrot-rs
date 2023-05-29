@@ -9,7 +9,7 @@ use std::iter;
 use std::time::Duration;
 use mandelbrot::*;
 
-type Real = f32;
+type Real = f64;
  
 pub fn main() {
     let sdl_context = sdl2::init().unwrap();
@@ -65,22 +65,25 @@ pub fn main() {
         if redraw {
             canvas.clear();
             texture.with_lock(None, |buf, pitch| -> () {
-                for y in 0..usize::try_from(h).unwrap() {
-                    for x in 0..usize::try_from(w).unwrap() {
-                        let pixel_index: usize = pitch * y + x * 3;
+                let scale: Real = 4.0 / Real::from(h);
+
+                for y in 0..h {
+                    for x in 0..w {
+                        let pixel_index: usize = pitch * usize::try_from(y).unwrap() + usize::try_from(x).unwrap() * 3;
                         (
                             buf[pixel_index],
                             buf[pixel_index + 1],
                             buf[pixel_index + 2]
-                        ) = (127, 100, 127);
+                        ) = match bounded((Real::from(x) * scale, Real::from(y) * scale), 1000) {
+                            (true, ..) => (0, 0, 0),
+                            _ => (255, 255, 255)
+                        }
                     }
                 }
             });
             canvas.copy(&texture, None, None);
             canvas.present();
         }
-
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 }
 

@@ -1,12 +1,27 @@
+// Rust type system will drive me nuts!
+
 pub trait Arithmetic:
     std::ops::Mul<Output=Self> +
     std::ops::Div<Output=Self> +
     std::ops::Add<Output=Self> +
     std::ops::Sub<Output=Self> +
-    std::cmp::Eq +
-    std::cmp::PartialOrd +
+    std::cmp::PartialOrd<Self> +
     std::convert::From<f32> +
+    std::convert::From<i32> +
     std::marker::Copy
+{
+
+}
+
+impl <T:
+    std::ops::Mul<Output=Self> +
+    std::ops::Div<Output=Self> +
+    std::ops::Add<Output=Self> +
+    std::ops::Sub<Output=Self> +
+    std::cmp::PartialOrd<Self> +
+    std::convert::From<f32> +
+    std::convert::From<i32> +
+    std::marker::Copy> Arithmetic for T
 {
 
 }
