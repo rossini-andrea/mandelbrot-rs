@@ -67,14 +67,14 @@ pub fn main() {
             texture.with_lock(None, |buf, pitch| -> () {
                 let scale: Real = 4.0 / Real::from(h);
 
-                for y in 0..h {
-                    for x in 0..w {
-                        let pixel_index: usize = pitch * usize::try_from(y).unwrap() + usize::try_from(x).unwrap() * 3;
+                for (y, y_chart) in (0..h).zip((-(h as i32 / 2)..(h as i32 / 2)).rev()) {
+                    for (x, x_chart) in (0..w).zip(-(w as i32 / 2)..w as i32 / 2) {
+                        let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
                         (
                             buf[pixel_index],
                             buf[pixel_index + 1],
                             buf[pixel_index + 2]
-                        ) = match bounded((Real::from(x) * scale, Real::from(y) * scale), 1000) {
+                        ) = match bounded((Real::from(x_chart) * scale, Real::from(y_chart) * scale), 1000) {
                             (true, ..) => (0, 0, 0),
                             _ => (255, 255, 255)
                         }
