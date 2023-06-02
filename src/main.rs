@@ -14,7 +14,8 @@ type Real = f64;
 pub fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
- 
+    let event_subsystem = sdl_context.event().unwrap();
+     
     let window = video_subsystem.window("Mandelbrot Explorer", 800, 600)
         .resizable()
         .opengl()
@@ -29,6 +30,7 @@ pub fn main() {
     canvas.present();
     let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
+    let (ui_executor, ui_dispatcher) = pumptasks::new_executor_and_dispatcher(&event_subsystem);
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     'running: loop {
@@ -40,6 +42,10 @@ pub fn main() {
         ).chain(
             event_pump.poll_iter()
         ) {
+            if ui_executor.handle_sdl_event(&event) {
+                continue;
+            }
+
             match event {
                 Event::Quit {..} |
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {

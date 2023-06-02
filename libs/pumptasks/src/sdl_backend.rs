@@ -38,7 +38,7 @@ struct SdlPumpTask {
 }
 
 /// A future for the awaiter side
-struct Task {
+pub struct Task {
     shared_state: Arc<Mutex<SharedState>>,
 }
 
@@ -137,7 +137,7 @@ impl Future for Task {
     }
 }
 
-fn new_executor_and_dispatcher(sdl_events: &sdl2::EventSubsystem) -> (SdlExecutor, SdlDispatcher) {
+pub fn new_executor_and_dispatcher(sdl_events: &sdl2::EventSubsystem) -> (SdlExecutor, SdlDispatcher) {
     sdl_events.register_custom_event::<Arc<SdlPumpTask>>();
     (SdlExecutor {}, SdlDispatcher::new(sdl_events))
 }
