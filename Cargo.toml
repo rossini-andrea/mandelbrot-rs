@@ -8,4 +8,6 @@ edition = "2021"
 [dependencies]
 sdl2 = "0.35.2"
 tokio = { "version" = "1.28.2", features = ["full"] }
+tokio-util = "0.7.8"
 pumptasks = { path = "libs/pumptasks" }
+futures = "0.3.*" 

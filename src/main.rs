@@ -5,17 +5,24 @@ use sdl2::{
     event::{Event, WindowEvent},
     keyboard::Keycode
 };
-use std::iter;
-use std::time::Duration;
+use std::{
+    iter,
+    time::Duration,
+    task::Poll,
+    vec::Vec
+};
 use tokio::{time, runtime::Runtime, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use pumptasks::SdlDispatcher;
+use futures::poll;
 use mandelbrot::*;
 
 type Real = f64;
 
 #[derive(Clone)]
 enum CustomMessages {
-    ResizeTexture
+    ResizeTexture,
+    MandelbrotReady(Vec<u8>),
 }
 
 pub fn main() {
@@ -45,12 +52,14 @@ pub fn main() {
         ui_dispatcher.clone()
     };
 
-    let mut redraw_task: Option<JoinHandle<()>> = None;
+    let mut resize_timer_task: Option<JoinHandle<()>> = None;
+    let mut mandelbrot_task: Option<(JoinHandle<()>, CancellationToken)> = None;
 
     'running: loop {
         let mut resized = false;
         let mut resize_texture = false;
         let mut redraw = false;
+        let mut mandelbrot_ready = false;
 
         for event in iter::once(
             event_pump.wait_event()
@@ -58,11 +67,27 @@ pub fn main() {
             event_pump.poll_iter()
         ) {
             if let Some(task) = ui_executor.handle_sdl_event::<CustomMessages, ()>(&event) {
-                match task {
-                    ref ResizeTexture => resize_texture = true,
+                match task.input() {
+                    CustomMessages::ResizeTexture => resize_texture = true,
+                    CustomMessages::MandelbrotReady(data) => {
+                        // Lock texture and copy data
+                        texture.with_lock(None, |buf, pitch| {
+                            for y in 0..h {
+                                for x in 0..w {
+                                    let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
+                                    let mandelbrot_index = usize::try_from((w * y + x) * 3).unwrap();
+                                    buf[pixel_index] = data[mandelbrot_index];
+                                    buf[pixel_index + 1] = data[mandelbrot_index + 1];
+                                    buf[pixel_index + 2] = data[mandelbrot_index + 2];
+                                }
+                            }
+                        });
+                        mandelbrot_ready = true;
+                    }
                 }
 
                 task.complete(());
+                continue;
             }
 
             match event {
@@ -81,36 +106,48 @@ pub fn main() {
         }
 
         if resized {
-            if let Some(task) = redraw_task.take() {
-                println!("Aborting task");
+            if let Some(task) = resize_timer_task.take() {
+                task.abort();
+            }
+
+            if let Some((task, token)) = mandelbrot_task.take() {
+                token.cancel();
                 task.abort();
             }
 
             let disp = ui_dispatcher();
-            redraw_task = Some(tokio_runtime.spawn(async move {
+            resize_timer_task = Some(tokio_runtime.spawn(async move {
                 time::sleep(Duration::from_millis(1000)).await;
-                println!("Sending redraw task...");
                 disp.spawn::<CustomMessages, ()>(CustomMessages::ResizeTexture).await;
-                println!("Redraw task complete");
             }));
         }
 
         if resize_texture {
             (w, h) = canvas.output_size().unwrap();
-            println!("Window resized to {}x{}.", w, h);
             texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
-            resize_texture = false;
             redraw = true;
         }
 
         if redraw {
-            canvas.clear();
-            texture.with_lock(None, |buf, pitch| -> () {
+            if let Some((task, token)) = mandelbrot_task.take() {
+                token.cancel();
+                task.abort();
+            }
+
+            let disp = ui_dispatcher();
+            let cancellation_token = CancellationToken::new();
+            let cancellation_token_clone = cancellation_token.clone();
+            mandelbrot_task = Some((tokio_runtime.spawn(async move{
+                let mut buf = vec![0u8; usize::try_from(w * h * 3).unwrap()];
                 let scale: Real = 4.0 / Real::from(h);
 
                 for (y, y_chart) in (0..h).zip((-(h as i32 / 2)..(h as i32 / 2)).rev()) {
                     for (x, x_chart) in (0..w).zip(-(w as i32 / 2)..w as i32 / 2) {
-                        let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
+                        if cancellation_token_clone.is_cancelled() {
+                            return;
+                        }
+
+                        let pixel_index = usize::try_from((w * y + x) * 3).unwrap();
                         (
                             buf[pixel_index],
                             buf[pixel_index + 1],
@@ -121,10 +158,15 @@ pub fn main() {
                         }
                     }
                 }
-            });
+     
+                disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
+            }), cancellation_token));
+        }
+
+        if mandelbrot_ready {
+            canvas.clear();
             canvas.copy(&texture, None, None);
             canvas.present();
-            redraw = false;
         }
     }
 }
