@@ -7,10 +7,17 @@ use sdl2::{
 };
 use std::iter;
 use std::time::Duration;
+use tokio::{time, runtime::Runtime, task::JoinHandle};
+use pumptasks::SdlDispatcher;
 use mandelbrot::*;
 
 type Real = f64;
- 
+
+#[derive(Clone)]
+enum CustomMessages {
+    ResizeTexture
+}
+
 pub fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -30,12 +37,19 @@ pub fn main() {
     canvas.present();
     let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
-    let (ui_executor, ui_dispatcher) = pumptasks::new_executor_and_dispatcher(&event_subsystem);
+    let (ui_executor, ui_dispatcher) = pumptasks::new_executor_and_dispatcher::<CustomMessages, ()>(&event_subsystem);
+    let tokio_runtime = Runtime::new().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
+
+    let ui_dispatcher = move || -> SdlDispatcher {
+        ui_dispatcher.clone()
+    };
 
     'running: loop {
         let mut resized = false;
+        let mut resize_texture = false;
         let mut redraw = false;
+        let mut redraw_task: Option<JoinHandle<()>> = None;
 
         for event in iter::once(
             event_pump.wait_event()
@@ -62,9 +76,26 @@ pub fn main() {
         }
 
         if resized {
+            if let Some(task) = redraw_task.take() {
+                task.abort();
+            }
+
+            let disp = ui_dispatcher();
+            let t = &mut resize_texture;
+            redraw_task = Some(tokio_runtime.spawn(async move {
+                time::sleep(Duration::from_millis(1000)).await;
+
+                disp.spawn(async {
+                    *t = true;
+                }).await;
+            }));
+        }
+
+        if resize_texture {
             (w, h) = canvas.output_size().unwrap();
             println!("Window resized to {}x{}.", w, h);
             texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
+            resize_texture = false;
             redraw = true;
         }
 
@@ -89,6 +120,7 @@ pub fn main() {
             });
             canvas.copy(&texture, None, None);
             canvas.present();
+            redraw = false;
         }
     }
 }
