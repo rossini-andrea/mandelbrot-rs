@@ -56,8 +56,12 @@ pub fn main() {
         ).chain(
             event_pump.poll_iter()
         ) {
-            if ui_executor.handle_sdl_event(&event) {
-                continue;
+            if let Some(task) = ui_executor.handle_sdl_event::<CustomMessages, ()>(&event) {
+                match task {
+                    ref ResizeTexture => resize_texture = true,
+                }
+
+                task.complete(());
             }
 
             match event {
@@ -84,10 +88,7 @@ pub fn main() {
             let t = &mut resize_texture;
             redraw_task = Some(tokio_runtime.spawn(async move {
                 time::sleep(Duration::from_millis(1000)).await;
-
-                disp.spawn(async {
-                    *t = true;
-                }).await;
+                disp.spawn::<CustomMessages, ()>(CustomMessages::ResizeTexture).await;
             }));
         }
 
