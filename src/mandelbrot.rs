@@ -46,8 +46,10 @@ pub fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool,
     (true, i)
 }
 
-pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: u32, h: u32, ct: CancellationToken) -> Option<Vec<u8>> {
-    let mut buf = vec![0u8; usize::try_from(w * h * 3).unwrap()];
+
+pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: u32, h: u32, maxiter: usize, ct: &CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
+    let mut set = vec![(false, 0usize); usize::try_from(w * h).unwrap()];
+    let mut hist = vec![0usize; maxiter + 1];
 
     for y in 0..h {
         for x in 0..w {
@@ -55,16 +57,34 @@ pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Rea
                 return None;
             }
 
-            let pixel_index = usize::try_from((w * y + x) * 3).unwrap();
-            (
-                buf[pixel_index],
-                buf[pixel_index + 1],
-                buf[pixel_index + 2]
-            ) = match bounded((Real::from(x) * scale + x_left, y_bottom + Real::from(y) * scale), 1000) {
-                (true, ..) => (0, 0, 0),
-                _ => (255, 255, 255)
-            }
+            let pixel_index = usize::try_from(w * y + x).unwrap();
+            let result = bounded((Real::from(x) * scale + x_left, y_bottom + Real::from(y) * scale), maxiter);
+            hist[result.1] += 1;
+            set[pixel_index] = result;
         }
+    }
+
+    Some((set, hist))
+}
+
+pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: u32, h: u32, maxiter: usize, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
+    let set = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, &ct) {
+        Some((set, _)) => set,
+        None => { return None }
+    };
+    let mut buf = vec![(0u8, 0u8, 0u8); usize::try_from(w * h).unwrap()];
+
+    for ((bounded, _), color) in set.iter().zip(buf.iter_mut()) {
+        if ct.is_cancelled() {
+            return None;
+        }
+
+        *color = if *bounded {
+            (0, 0, 0)
+        } else {
+            (255, 255, 255)
+        };
+    
     }
 
     Some(buf)

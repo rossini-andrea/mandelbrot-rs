@@ -22,7 +22,7 @@ type Real = f64;
 #[derive(Clone)]
 enum CustomMessages {
     ResizeTexture,
-    MandelbrotReady(Vec<u8>),
+    MandelbrotReady(Vec<(u8, u8, u8)>),
 }
 
 pub fn main() {
@@ -75,10 +75,12 @@ pub fn main() {
                             for y in 0..h {
                                 for x in 0..w {
                                     let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
-                                    let mandelbrot_index = usize::try_from((w * y + x) * 3).unwrap();
-                                    buf[pixel_index] = data[mandelbrot_index];
-                                    buf[pixel_index + 1] = data[mandelbrot_index + 1];
-                                    buf[pixel_index + 2] = data[mandelbrot_index + 2];
+                                    let mandelbrot_index = usize::try_from(w * y + x).unwrap();
+                                    (
+                                        buf[pixel_index],
+                                        buf[pixel_index + 1],
+                                        buf[pixel_index + 2]
+                                    ) = data[mandelbrot_index];
                                 }
                             }
                         });
@@ -143,7 +145,7 @@ pub fn main() {
                     Real::from(-(w as i32 / 2)) * scale,
                     Real::from(-(h as i32 / 2)) * scale,
                     scale,
-                    w, h,
+                    w, h, 20000,
                     cancellation_token_clone
                 ) {
                     disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
