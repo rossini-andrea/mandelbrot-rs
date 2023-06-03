@@ -138,28 +138,16 @@ pub fn main() {
             let cancellation_token = CancellationToken::new();
             let cancellation_token_clone = cancellation_token.clone();
             mandelbrot_task = Some((tokio_runtime.spawn(async move{
-                let mut buf = vec![0u8; usize::try_from(w * h * 3).unwrap()];
                 let scale: Real = 4.0 / Real::from(h);
-
-                for (y, y_chart) in (0..h).zip((-(h as i32 / 2)..(h as i32 / 2)).rev()) {
-                    for (x, x_chart) in (0..w).zip(-(w as i32 / 2)..w as i32 / 2) {
-                        if cancellation_token_clone.is_cancelled() {
-                            return;
-                        }
-
-                        let pixel_index = usize::try_from((w * y + x) * 3).unwrap();
-                        (
-                            buf[pixel_index],
-                            buf[pixel_index + 1],
-                            buf[pixel_index + 2]
-                        ) = match bounded((Real::from(x_chart) * scale, Real::from(y_chart) * scale), 1000) {
-                            (true, ..) => (0, 0, 0),
-                            _ => (255, 255, 255)
-                        }
-                    }
+                if let Some(buf) = mandelbrot::mandelbrot_set(
+                    Real::from(-(w as i32 / 2)) * scale,
+                    Real::from(-(h as i32 / 2)) * scale,
+                    scale,
+                    w, h,
+                    cancellation_token_clone
+                ) {
+                    disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
                 }
-     
-                disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
             }), cancellation_token));
         }
 
