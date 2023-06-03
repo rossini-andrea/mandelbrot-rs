@@ -45,11 +45,12 @@ pub fn main() {
         ui_dispatcher.clone()
     };
 
+    let mut redraw_task: Option<JoinHandle<()>> = None;
+
     'running: loop {
         let mut resized = false;
         let mut resize_texture = false;
         let mut redraw = false;
-        let mut redraw_task: Option<JoinHandle<()>> = None;
 
         for event in iter::once(
             event_pump.wait_event()
@@ -81,14 +82,16 @@ pub fn main() {
 
         if resized {
             if let Some(task) = redraw_task.take() {
+                println!("Aborting task");
                 task.abort();
             }
 
             let disp = ui_dispatcher();
-            let t = &mut resize_texture;
             redraw_task = Some(tokio_runtime.spawn(async move {
                 time::sleep(Duration::from_millis(1000)).await;
+                println!("Sending redraw task...");
                 disp.spawn::<CustomMessages, ()>(CustomMessages::ResizeTexture).await;
+                println!("Redraw task complete");
             }));
         }
 

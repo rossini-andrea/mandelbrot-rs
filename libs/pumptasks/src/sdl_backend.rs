@@ -41,6 +41,10 @@ impl<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone> SdlPumpTask<TIn,
     pub fn complete(&self, result: TOut) {
         let mut shared_state = self.shared_state.lock().unwrap();
         shared_state.completed = Poll::Ready(result);
+
+        if let Some(waker) = shared_state.waker.take() {
+            waker.wake()
+        }
     }
 }
 
