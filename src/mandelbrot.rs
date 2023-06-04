@@ -1,6 +1,9 @@
+use std::vec::Vec;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 pub trait Arithmetic:
+    'static +
     std::ops::Mul<Output=Self> +
     std::ops::Div<Output=Self> +
     std::ops::Add<Output=Self> +
@@ -9,12 +12,14 @@ pub trait Arithmetic:
     std::convert::From<f32> +
     std::convert::From<i32> +
     std::convert::From<u32> +
-    std::marker::Copy
+    std::marker::Copy +
+    std::marker::Send
 {
 
 }
 
 impl <T:
+    'static +
     std::ops::Mul<Output=Self> +
     std::ops::Div<Output=Self> +
     std::ops::Add<Output=Self> +
@@ -23,7 +28,9 @@ impl <T:
     std::convert::From<f32> +
     std::convert::From<i32> +
     std::convert::From<u32> +
-    std::marker::Copy> Arithmetic for T
+    std::marker::Copy +
+    std::marker::Send
+    > Arithmetic for T
 {
 
 }
@@ -47,9 +54,11 @@ pub fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool,
 }
 
 
-pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: &CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
+pub async fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
     let mut set = vec![(false, 0usize); usize::try_from(w * h).unwrap()];
     let mut hist = vec![0usize; maxiter + 1];
+
+    let mut tasks = Vec::<JoinHandle<(bool, usize)>>::with_capacity(usize::try_from(w * h).unwrap());
 
     for y in 0..h {
         for x in 0..w {
@@ -57,23 +66,34 @@ pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scal
                 return None;
             }
 
-            let pixel_index = w * y + x;
-            let result = bounded((Real::from(x as f32) * scale + x_left, y_bottom + Real::from(y as f32) * scale), maxiter);
-            hist[result.1] += 1;
-            set[pixel_index] = result;
+            let max = maxiter;
+            tasks.push(tokio::spawn(async move {
+                bounded((Real::from(x as f32) * scale + x_left, y_bottom + Real::from(y as f32) * scale), max)
+            }));
         }
+    }
+
+    for (t, pixel_index) in tasks.iter_mut().zip(0..) {
+        let result = t.await.ok()?;
+        hist[result.1] += 1;
+        set[pixel_index] = result;
     }
 
     Some((set, hist))
 }
 
-pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
-    let (set, hist) = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, &ct) {
+pub async fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
+    let (set, hist) = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, ct.clone()).await {
         Some(r) => r,
-        None => { return None }
+        None => { return None; }
     };
     let mut color_remap = vec![0usize; maxiter + 1];
     let pixel_count = w * h;
+
+    if ct.is_cancelled() {
+        return None;
+    }
+
     let buf: Vec<(u8, u8, u8)> = set.into_iter().map(|(b, i)| {
         let color_index = if b {
             pixel_count 
@@ -87,6 +107,10 @@ pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Rea
 
         palette[color_index]
     }).collect();
+
+    if ct.is_cancelled() {
+        return None;
+    }
 
     Some(buf)
 }

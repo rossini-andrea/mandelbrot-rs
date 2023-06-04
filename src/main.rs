@@ -148,7 +148,7 @@ pub fn main() {
                     w as usize, h as usize, 20000,
                     &vec![(255, 255, 255), (0, 0, 0)],
                     cancellation_token_clone
-                ) {
+                ).await {
                     disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
                 }
             }), cancellation_token));
