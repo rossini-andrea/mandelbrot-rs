@@ -47,7 +47,7 @@ pub fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool,
 }
 
 
-pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: u32, h: u32, maxiter: usize, ct: &CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
+pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: &CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
     let mut set = vec![(false, 0usize); usize::try_from(w * h).unwrap()];
     let mut hist = vec![0usize; maxiter + 1];
 
@@ -57,8 +57,8 @@ pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scal
                 return None;
             }
 
-            let pixel_index = usize::try_from(w * y + x).unwrap();
-            let result = bounded((Real::from(x) * scale + x_left, y_bottom + Real::from(y) * scale), maxiter);
+            let pixel_index = w * y + x;
+            let result = bounded((Real::from(x as f32) * scale + x_left, y_bottom + Real::from(y as f32) * scale), maxiter);
             hist[result.1] += 1;
             set[pixel_index] = result;
         }
@@ -67,25 +67,26 @@ pub fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scal
     Some((set, hist))
 }
 
-pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: u32, h: u32, maxiter: usize, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
-    let set = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, &ct) {
-        Some((set, _)) => set,
+pub fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
+    let (set, hist) = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, &ct) {
+        Some(r) => r,
         None => { return None }
     };
-    let mut buf = vec![(0u8, 0u8, 0u8); usize::try_from(w * h).unwrap()];
-
-    for ((bounded, _), color) in set.iter().zip(buf.iter_mut()) {
-        if ct.is_cancelled() {
-            return None;
-        }
-
-        *color = if *bounded {
-            (0, 0, 0)
+    let mut color_remap = vec![0usize; maxiter + 1];
+    let pixel_count = w * h;
+    let buf: Vec<(u8, u8, u8)> = set.into_iter().map(|(b, i)| {
+        let color_index = if b {
+            pixel_count 
+        } else if color_remap[i] == 0 {
+            let c = hist.clone().into_iter().take(i).fold(0, |a, b| a + b);
+            color_remap[i] = c;
+            c
         } else {
-            (255, 255, 255)
-        };
-    
-    }
+            color_remap[i]
+        } * (palette.len() - 1) / pixel_count;
+
+        palette[color_index]
+    }).collect();
 
     Some(buf)
 }

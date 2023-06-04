@@ -142,10 +142,11 @@ pub fn main() {
             mandelbrot_task = Some((tokio_runtime.spawn(async move{
                 let scale: Real = 4.0 / Real::from(h);
                 if let Some(buf) = mandelbrot::mandelbrot_set(
-                    Real::from(-(w as i32 / 2)) * scale,
-                    Real::from(-(h as i32 / 2)) * scale,
+                    - Real::from(w / 2) * scale,
+                    - Real::from(h / 2) * scale,
                     scale,
-                    w, h, 20000,
+                    w as usize, h as usize, 20000,
+                    &vec![(255, 255, 255), (0, 0, 0)],
                     cancellation_token_clone
                 ) {
                     disp.spawn::<CustomMessages, ()>(CustomMessages::MandelbrotReady(buf)).await;
