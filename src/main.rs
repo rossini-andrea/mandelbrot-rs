@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{time, runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use pumptasks::SdlDispatcher;
+use sdl_dispatch::SdlDispatcher;
 use futures::poll;
 use mandelbrot::*;
 
@@ -44,7 +44,7 @@ pub fn main() {
     canvas.present();
     let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
-    let (ui_executor, ui_dispatcher) = pumptasks::new_executor_and_dispatcher::<CustomMessages, ()>(&event_subsystem);
+    let (ui_executor, ui_dispatcher) = sdl_dispatch::new_executor_and_dispatcher::<CustomMessages, ()>(&event_subsystem);
     let tokio_runtime = Runtime::new().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
