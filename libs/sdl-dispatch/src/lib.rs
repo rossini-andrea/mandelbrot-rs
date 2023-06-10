@@ -7,11 +7,6 @@ use std::{
     sync::Arc,
 };
 
-/// Task executor that receives task notifications from SDL messages.
-pub struct SdlExecutor {
-
-}
-
 /// `SdlDispatcher` spawns new futures onto the SDL message pump.
 #[derive(Clone)]
 pub struct SdlDispatcher {
@@ -38,7 +33,7 @@ impl<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug> SdlPumpT
 }
 
 impl SdlDispatcher {
-    fn new(sdl_events: &sdl2::EventSubsystem) -> Self {
+    pub fn from_eventsubsystem(sdl_events: &sdl2::EventSubsystem) -> Self {
         Self {
             event_sender: sdl_events.event_sender().into(),
         }
@@ -57,20 +52,17 @@ impl SdlDispatcher {
     }
 }
 
-impl SdlExecutor {
-    /// Handles an SDL event, running a task if it is a Task Notification
-    /// Returns `true` if the event was handled.
-    pub fn handle_sdl_event<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug>(&self, event: &Event) -> Option<SdlPumpTask<TIn, TOut>> {
-        if !event.is_user_event() {
-            return None;
-        }
+/// Inspects an SDL event, returning a task if it is a Task Notification.
+/// Returns `None` if the event can't be converted to .
+pub fn handle_sdl_event<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug>(event: &Event) -> Option<SdlPumpTask<TIn, TOut>> {
+    if !event.is_user_event() {
+        return None;
+    }
 
-        event.as_user_event_type::<SdlPumpTask<TIn, TOut>>()
-   }
+    event.as_user_event_type::<SdlPumpTask<TIn, TOut>>()
 }
 
-pub fn new_executor_and_dispatcher<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug>(sdl_events: &sdl2::EventSubsystem) -> (SdlExecutor, SdlDispatcher) {
+pub fn register_task_type<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug>(sdl_events: &sdl2::EventSubsystem) {
     sdl_events.register_custom_event::<SdlPumpTask<TIn, TOut>>().expect("Types already registered");
-    (SdlExecutor {}, SdlDispatcher::new(sdl_events))
 }
 

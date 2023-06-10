@@ -44,7 +44,8 @@ pub fn main() {
     canvas.present();
     let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
-    let (ui_executor, ui_dispatcher) = sdl_dispatch::new_executor_and_dispatcher::<CustomMessages, ()>(&event_subsystem);
+    sdl_dispatch::register_task_type::<CustomMessages, ()>(&event_subsystem);
+    let ui_dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
     let tokio_runtime = Runtime::new().unwrap();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
@@ -66,7 +67,7 @@ pub fn main() {
         ).chain(
             event_pump.poll_iter()
         ) {
-            if let Some(task) = ui_executor.handle_sdl_event::<CustomMessages, ()>(&event) {
+            if let Some(task) = sdl_dispatch::handle_sdl_event::<CustomMessages, ()>(&event) {
                 match task.input() {
                     CustomMessages::ResizeTexture => resize_texture = true,
                     CustomMessages::MandelbrotReady(data) => {
