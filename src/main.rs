@@ -11,6 +11,7 @@ use std::{
     task::Poll,
     vec::Vec
 };
+use salty_broth::sdl_app::*;
 use tokio::{time, runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use sdl_dispatch::SdlDispatcher;
@@ -26,17 +27,17 @@ enum CustomMessages {
 }
 
 pub fn main() {
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-    let event_subsystem = sdl_context.event().unwrap();
-     
-    let window = video_subsystem.window("Mandelbrot Explorer", 800, 600)
-        .resizable()
-        .opengl()
-        .build()
-        .unwrap();
- 
-    let mut canvas = window.into_canvas().build().unwrap();
+    let apprunner = AppBuilder::new("Mandelbrot Explorer")
+        .window_size(800, 600)
+        .with_dispatch()
+        .with_tokio()
+        .passive_event_loop()
+        .build();
+
+    let tokio = Runtime::new();
+    let _guard = tokio.enter();
+}
+/* 
     let texture_creator = canvas.texture_creator();
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
@@ -44,14 +45,8 @@ pub fn main() {
     canvas.present();
     let (mut w, mut h) = canvas.output_size().unwrap();
     let mut texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
+    
     sdl_dispatch::register_task_type::<CustomMessages, ()>(&event_subsystem);
-    let ui_dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
-    let tokio_runtime = Runtime::new().unwrap();
-    let mut event_pump = sdl_context.event_pump().unwrap();
-
-    let ui_dispatcher = move || -> SdlDispatcher {
-        ui_dispatcher.clone()
-    };
 
     let mut resize_timer_task: Option<JoinHandle<()>> = None;
     let mut mandelbrot_task: Option<(JoinHandle<()>, CancellationToken)> = None;
@@ -162,4 +157,4 @@ pub fn main() {
         }
     }
 }
-
+*/

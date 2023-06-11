@@ -1,4 +1,8 @@
 use sdl2::{
+    Sdl,
+    VideoSubsystem,
+    EventSubsystem,
+    EventPump,
     pixels::{Color, PixelFormatEnum},
     event::{Event, WindowEvent},
     keyboard::Keycode,
@@ -32,7 +36,7 @@ macro_rules! dispatch_handlers {
                 if !event.is_user() {
                     return false;
                 }
-                $(
+        $(
                     if let Some(task) = event.as_user_event_type::<$type>() {
                         self.$func_name(task);
                         return true;
@@ -60,63 +64,88 @@ macro_rules! dispatch_message {
 pub trait App {
     fn window_info(&self) -> (String, u32, u32);
     fn resized(&self);
-    fn canvas_ready(&self, canvas: Canvas<Window>);
-    fn handle_dispatch(&self, message: &Event);
+    fn canvas_ready(&self, canvas: &Canvas<Window>);
+    fn register_dispatch(&self, sdl_events: &sdl2::EventSubsystem);
+    fn handle_dispatch(&self, message: &Event) -> bool;
 }
 
-static mut ui_dispatcher: Option<Arc<SdlDispatcher>> = None;
+static mut ui_dispatcher: Option<&'static SdlDispatcher> = None;
 
-pub fn dispatcher() -> Arc<SdlDispatcher> {
-    ui_dispatcher.expect("Trying to use the dispatcher without a running app.").clone()
+pub fn dispatcher() -> &'static SdlDispatcher {
+    unsafe {
+        ui_dispatcher.expect("Trying to use the dispatcher without a running app.")
+    }
 }
 
 struct AppRunner {
-    sdl_context: SdlContext,
+    sdl_context: Sdl,
     video_subsystem: VideoSubsystem,
     event_subsystem: EventSubsystem,
-    window: Window,
-    canvas: Canvas,
+    canvas: Canvas<Window>,
     event_pump: EventPump,
-    self.with_tokio: bool,
-    self.with_dispatch: bool,
-    self.passive: bool,
+    dispatcher: SdlDispatcher,
+    with_tokio: bool,
+    with_dispatch: bool,
+    passive: bool,
+}
+
+/// Defines flags to notifiy interesting things discovered while
+/// pumping events
+#[derive(Default)]
+struct PostPumpState {
+    pub resized: bool,
+    pub quit: bool,
 }
 
 impl AppRunner {
-    /// Defines flags to notifiy interesting things discovered while
-    /// pumping events
-    struct PostPumpState {
-        pub resized: bool,
-    };
-
     /// Runs an app inside an event loop.
     pub fn run<T>(&self, app: T) 
     where T: App {
-        let mut event_pump = sdl_context.event_pump().unwrap();
+        let mut event_pump = self.sdl_context.event_pump().unwrap();
 
-        let _tokio = if self.with_tokio {
-            let runtime = Runtime::new().unwrap();
-            Some(runtime, runtime.enter())
-        } else {
-            None
+        if self.with_tokio {
+            // If you want tokio, initialize it in your main!
         };
 
         if self.with_dispatch {
-            app.register_dispatch(&self.sdl_events);
+            app.register_dispatch(&self.event_subsystem);
         }
 
-        app.canvas_ready(self.canvas);
+        app.canvas_ready(&self.canvas);
+
+        let handle_event = |event: Event, state: &mut PostPumpState| {
+            if event.is_user_event() && app.handle_dispatch(&event) {
+                return;
+            }
+            match event {
+                Event::Quit {..} |
+                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    state.quit = true;
+                },
+                Event::Window {
+                    win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
+                    ..
+                } => {
+                    state.resized = true;
+                }
+                _ => {}
+            }
+        };
 
         if self.passive {
             'running: loop {
-                let mut postpumpstate = PostPumpState{};
+                let mut postpumpstate = PostPumpState{..Default::default()};
 
                 for event in iter::once(
                     event_pump.wait_event()
                 ).chain(
                     event_pump.poll_iter()
                 ) {
-                    self.handle_event(event, &mut postpumpstate);
+                    handle_event(event, &mut postpumpstate);
+                }
+
+                if postpumpstate.quit {
+                    break 'running;
                 }
 
                 if postpumpstate.resized {
@@ -125,12 +154,17 @@ impl AppRunner {
             }
         } else {
             'running: loop {
-                let mut postpumpstate = PostPumpState{};
+                let mut postpumpstate = PostPumpState{..Default::default()};
 
                 for event in event_pump.poll_iter() {
-                    self.handle_event(event, &mut postpumpstate);
+                    handle_event(event, &mut postpumpstate);
                 }
-     
+
+                if postpumpstate.quit {
+                    break 'running;
+                }
+
+    
                 if postpumpstate.resized {
                     app.resized();
                 }
@@ -138,39 +172,26 @@ impl AppRunner {
         }
     }
 
-    fn handle_event(&self, event: Event, &mut state: PostPumpState) {
-        if event.is_user_event() && app.handle_dispatch(&event) {
-            continue;
-        }
-        match event {
-            Event::Quit {..} |
-            Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                break 'running
-            },
-            Event::Window {
-                win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
-                ..
-            } => {
-                state.resized = true;
-            }
-            _ => {}
-        }
-    }
 }
 
 struct AppBuilder {
-    title: str,
+    title: String,
     window_size: (u32, u32),
     with_tokio: bool,
     with_dispatch: bool,
+    with_egui: bool,
     passive: bool,
 }
 
 impl AppBuilder {
-    fn new(title: str) -> &mut Self {
+    fn new(title: &str) -> Self {
         Self {
-            title: title,
+            title: title.to_string(),
             window_size: (800, 600),
+            with_tokio: false,
+            with_dispatch: false,
+            with_egui: false,
+            passive: false,
         }
     }
 
@@ -204,7 +225,7 @@ impl AppBuilder {
         let video_subsystem = sdl_context.video().unwrap();
         let event_subsystem = sdl_context.event().unwrap();
 
-        let window = video_subsystem.window(&self.title, self.size.0, self.size.1)
+        let window = video_subsystem.window(&self.title, self.window_size.0, self.window_size.1)
             .resizable()
             .opengl()
             .build()
@@ -212,20 +233,22 @@ impl AppBuilder {
         let mut canvas = window.into_canvas().build().unwrap();
         let mut event_pump = sdl_context.event_pump().unwrap();
 
-        if self.with_dispatch {
-            ui_dispatcher = Some(SdlDispatcher::from_event_subsystem()(&event_subsystem));
+        let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
+
+        unsafe {
+            ui_dispatcher = Some(&dispatcher);
         }
 
         AppRunner {
             sdl_context,
             video_subsystem,
             event_subsystem,
-            window,
             canvas,
             event_pump,
-            self.with_tokio,
-            self.with_dispatch,
-            self.passive
+            dispatcher,
+            with_tokio: self.with_tokio,
+            with_dispatch: self.with_dispatch,
+            passive: self.passive
         }
     }
 }

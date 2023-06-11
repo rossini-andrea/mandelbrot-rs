@@ -151,6 +151,7 @@ name = "mandelbrot-rs"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "salty-broth",
  "sdl-dispatch",
  "sdl2",
  "tokio",
@@ -244,6 +245,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "salty-broth"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "sdl-dispatch",
+ "sdl2",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

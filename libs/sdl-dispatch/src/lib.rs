@@ -8,9 +8,8 @@ use std::{
 };
 
 /// `SdlDispatcher` spawns new futures onto the SDL message pump.
-#[derive(Clone)]
 pub struct SdlDispatcher {
-    event_sender: Arc<EventSender>,
+    event_sender: EventSender,
 }
 
 /// A future that gets scheduled in SDL pump
