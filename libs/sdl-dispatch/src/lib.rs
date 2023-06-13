@@ -4,7 +4,6 @@ use futures::{
 };
 use std::{
     fmt::Debug,
-    sync::Arc,
 };
 
 /// `SdlDispatcher` spawns new futures onto the SDL message pump.

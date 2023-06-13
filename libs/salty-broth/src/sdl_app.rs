@@ -3,7 +3,6 @@ use sdl2::{
     VideoSubsystem,
     EventSubsystem,
     EventPump,
-    pixels::{Color, PixelFormatEnum},
     event::{Event, WindowEvent},
     keyboard::Keycode,
     render::Canvas,
@@ -12,31 +11,31 @@ use sdl2::{
 use sdl_dispatch::SdlDispatcher;
 use std::{
     iter,
-    sync::Arc,
 };
-use tokio::runtime::Runtime;
 
+#[macro_export]
 macro_rules! dispatch_handlers {
     (
-        $app,
+        $app:ident ,
         $(
-            fn $func_name:ident($self, $essage: $type) {
-                $impl:block
-            }
-        )
-        
+            fn $func_name:ident (&$self:ident, $message:ident : $type:ty )
+            $impl:block
+        )      
         *
     ) => {
-        impl $app {
-            fn $func_name($self, $message: type>) {
-                $impl:block
-            }
+        impl $app<'_> {
+            $(
+            fn $func_name(&$self, $message: $type)
+                $impl
+            )*
+        }
 
+        impl sdl_app::DispatchHandler for $app<'_> {
             fn handle_dispatch(&self, event: &Event ) -> bool {
                 if !event.is_user() {
                     return false;
                 }
-        $(
+                $(
                     if let Some(task) = event.as_user_event_type::<$type>() {
                         self.$func_name(task);
                         return true;
@@ -54,36 +53,38 @@ macro_rules! dispatch_handlers {
     }
 }
 
-macro_rules! dispatch_message {
-    ($app, $name, $(par),*) => {
-        // Get the dispatcher somehow
-        sdl_app::ui_dispatcher().spawn::<concat_idents!($app, _, DispatchMessages), ()>(concat_idents!($app, _, DispatchMessages)::$Name)
+pub struct AppSystem {
+    canvas: Canvas<Window>,
+    dispatcher: SdlDispatcher,
+}
+
+impl AppSystem {
+    pub fn canvas(&self) -> &Canvas<Window> {
+        &self.canvas
+    }
+
+    pub fn dispatcher(&self) -> &SdlDispatcher {
+        &self.dispatcher
     }
 }
 
 pub trait App {
-    fn window_info(&self) -> (String, u32, u32);
+    fn start(&self);
     fn resized(&self);
-    fn canvas_ready(&self, canvas: &Canvas<Window>);
+    fn stop(&self);
+}
+
+pub trait DispatchHandler {
     fn register_dispatch(&self, sdl_events: &sdl2::EventSubsystem);
     fn handle_dispatch(&self, message: &Event) -> bool;
 }
 
-static mut ui_dispatcher: Option<&'static SdlDispatcher> = None;
-
-pub fn dispatcher() -> &'static SdlDispatcher {
-    unsafe {
-        ui_dispatcher.expect("Trying to use the dispatcher without a running app.")
-    }
-}
-
-struct AppRunner {
+pub struct AppRunner {
     sdl_context: Sdl,
     video_subsystem: VideoSubsystem,
     event_subsystem: EventSubsystem,
-    canvas: Canvas<Window>,
     event_pump: EventPump,
-    dispatcher: SdlDispatcher,
+    app_system: AppSystem,
     with_tokio: bool,
     with_dispatch: bool,
     passive: bool,
@@ -99,19 +100,21 @@ struct PostPumpState {
 
 impl AppRunner {
     /// Runs an app inside an event loop.
-    pub fn run<T>(&self, app: T) 
-    where T: App {
+    pub fn run<'a, T>(&'a self) 
+    where T: App + DispatchHandler + From<&'a AppSystem> { 
         let mut event_pump = self.sdl_context.event_pump().unwrap();
 
         if self.with_tokio {
             // If you want tokio, initialize it in your main!
         };
 
+        let app = T::from(&self.app_system);
+
         if self.with_dispatch {
             app.register_dispatch(&self.event_subsystem);
         }
 
-        app.canvas_ready(&self.canvas);
+        app.start();
 
         let handle_event = |event: Event, state: &mut PostPumpState| {
             if event.is_user_event() && app.handle_dispatch(&event) {
@@ -170,11 +173,12 @@ impl AppRunner {
                 }
             }
         }
-    }
 
+        app.stop();
+    }
 }
 
-struct AppBuilder {
+pub struct AppBuilder {
     title: String,
     window_size: (u32, u32),
     with_tokio: bool,
@@ -184,7 +188,7 @@ struct AppBuilder {
 }
 
 impl AppBuilder {
-    fn new(title: &str) -> Self {
+    pub fn new(title: &str) -> Self {
         Self {
             title: title.to_string(),
             window_size: (800, 600),
@@ -195,32 +199,32 @@ impl AppBuilder {
         }
     }
 
-    fn window_size(&mut self, w: u32, h: u32) -> &mut Self {
+    pub fn window_size(&mut self, w: u32, h: u32) -> &mut Self {
         self.window_size = (w, h);
         self
     }
     
-    fn with_tokio(&mut self) -> &mut Self {
+    pub fn with_tokio(&mut self) -> &mut Self {
         self.with_tokio = true;
         self
     }
 
-    fn with_dispatch(&mut self) -> &mut Self {
+    pub fn with_dispatch(&mut self) -> &mut Self {
         self.with_dispatch = true;
         self
     }
 
-    fn passive_event_loop(&mut self) -> &mut Self {
+    pub fn passive_event_loop(&mut self) -> &mut Self {
         self.passive = true;
         self
     }
 
-    fn with_egui(&mut self) -> &mut Self {
+    pub fn with_egui(&mut self) -> &mut Self {
         self.with_egui = true;
         self
     }
 
-    fn build(&self) -> AppRunner {
+    pub fn build(&self) -> AppRunner {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let event_subsystem = sdl_context.event().unwrap();
@@ -231,21 +235,19 @@ impl AppBuilder {
             .build()
             .unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
-        let mut event_pump = sdl_context.event_pump().unwrap();
+        let event_pump = sdl_context.event_pump().unwrap();
 
         let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
-
-        unsafe {
-            ui_dispatcher = Some(&dispatcher);
-        }
 
         AppRunner {
             sdl_context,
             video_subsystem,
             event_subsystem,
-            canvas,
             event_pump,
-            dispatcher,
+            app_system: AppSystem{
+                canvas,
+                dispatcher
+            },
             with_tokio: self.with_tokio,
             with_dispatch: self.with_dispatch,
             passive: self.passive
