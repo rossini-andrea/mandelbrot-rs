@@ -6,7 +6,7 @@ use salty_broth::{
 use sdl_dispatch::SdlPumpTask;
 use sdl2::{
     render::{ Canvas, Texture, TextureCreator },
-    video::Window,
+    video::{ Window, WindowContext },
     event::Event,
     pixels::PixelFormatEnum,
 };
@@ -18,41 +18,39 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use crate::mandelbrot;
 
-type Real = f32;
+type Real = f64;
 
-#[derive(Default)]
-pub struct App<'a> {
-    app_system: &'a AppSystem,
+pub struct MainApp<'a> {
+    app_system: &'a mut AppSystem,
     resize_timer_task: Option<JoinHandle<()>>, 
     mandelbrot_task: Option<(JoinHandle<()>, CancellationToken)>,
-    texture_creator: TextureCreator<Canvas<Window>>,
     texture: Texture<'a>,
     w: u32, h: u32,
 }
 
-impl From<&AppSystem> for App<'_> {
-    fn from(app_system: &AppSystem) -> Self {
-        let texture_creator = app_system.canvas().texture_creator();
+impl<'a> From<&'a mut AppSystem> for MainApp<'a> {
+    fn from(app_system: &'a mut AppSystem) -> Self {
         let (w, h) = app_system.canvas().output_size().unwrap();
-        let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
+        let texture = {
+            app_system.texture_creator().create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap()
+        };
         Self {
             app_system,
             resize_timer_task: None, 
             mandelbrot_task: None, 
-            texture_creator,
             texture,
             w, h
         }
     }
 }
 
-impl sdl_app::App for App<'_> {
-    fn start(&self) {
+impl sdl_app::App for MainApp<'_> {
+    fn start(&mut self) {
         self.app_system.canvas().clear();
         self.app_system.canvas().present();
     }
 
-    fn resized(&self) {
+    fn resized(&mut self) {
         if let Some(task) = self.resize_timer_task.take() {
             task.abort();
         }
@@ -65,8 +63,12 @@ impl sdl_app::App for App<'_> {
         let disp = self.app_system.dispatcher();
         self.resize_timer_task = Some(tokio::spawn(async move {
             time::sleep(Duration::from_millis(1000)).await;
-            disp.spawn(ResizeTexture{}).await;
+            disp.spawn::<ResizeTexture, ()>(ResizeTexture{}).await;
         }));
+    }
+
+    fn stop(&mut self) {
+
     }
 }
 
@@ -77,11 +79,11 @@ struct MandelbrotReady {
 }
 
 dispatch_handlers! {
-    App,
+    MainApp<'_>,
     fn resize_texture(&self, task: SdlPumpTask<ResizeTexture, ()>) {
-        (self.w, self.h) = self.canvas.output_size().unwrap();
-        self.texture = self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h).unwrap();
-        task.complete();
+        (self.w, self.h) = self.app_system.canvas().output_size().unwrap();
+        self.texture = self.app_system.texture_creator().create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h).unwrap();
+        task.complete(());
         // TODO: Dispatch a redraw message.
     }
 
@@ -111,7 +113,8 @@ dispatch_handlers! {
     }
 
     fn mandelbrot_ready(&self, task: SdlPumpTask<MandelbrotReady, ()>) {
-        task.complete();
+        let image = task.input().buf;
+        task.complete(());
 
         // Lock texture and copy data
         self.texture.with_lock(None, |buf, pitch| {
@@ -123,12 +126,14 @@ dispatch_handlers! {
                         buf[pixel_index],
                         buf[pixel_index + 1],
                         buf[pixel_index + 2]
-                    ) = task.input().buf[mandelbrot_index];
+                    ) = image[mandelbrot_index];
                 }
             }
         });
-        self.canvas.clear();
-        self.canvas.copy(&self.texture, None, None);
-        self.canvas.present();
+
+        let canvas = self.app_system.canvas();
+        canvas.clear();
+        canvas.copy(&self.texture, None, None);
+        canvas.present();
     }
 }

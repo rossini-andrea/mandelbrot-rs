@@ -5,8 +5,8 @@ use sdl2::{
     EventPump,
     event::{Event, WindowEvent},
     keyboard::Keycode,
-    render::Canvas,
-    video::Window,
+    render::{Canvas, TextureCreator},
+    video::{Window, WindowContext},
 };
 use sdl_dispatch::SdlDispatcher;
 use std::{
@@ -16,22 +16,22 @@ use std::{
 #[macro_export]
 macro_rules! dispatch_handlers {
     (
-        $app:ident ,
+        $app:ident < $( $gen:tt ),+ >,
         $(
             fn $func_name:ident (&$self:ident, $message:ident : $type:ty )
             $impl:block
-        )      
+        )
         *
     ) => {
-        impl $app<'_> {
+        impl $app<$($gen,)*> {
             $(
             fn $func_name(&$self, $message: $type)
                 $impl
             )*
         }
 
-        impl sdl_app::DispatchHandler for $app<'_> {
-            fn handle_dispatch(&self, event: &Event ) -> bool {
+        impl sdl_app::DispatchHandler for $app<$($gen,)*> {
+            fn handle_dispatch(&mut self, event: &Event ) -> bool {
                 if !event.is_user() {
                     return false;
                 }
@@ -55,28 +55,33 @@ macro_rules! dispatch_handlers {
 
 pub struct AppSystem {
     canvas: Canvas<Window>,
+    texture_creator: TextureCreator<WindowContext>,
     dispatcher: SdlDispatcher,
 }
 
 impl AppSystem {
-    pub fn canvas(&self) -> &Canvas<Window> {
-        &self.canvas
+    pub fn canvas(&mut self) -> &mut Canvas<Window> {
+        &mut self.canvas
     }
 
-    pub fn dispatcher(&self) -> &SdlDispatcher {
+    pub fn dispatcher(&mut self) -> &SdlDispatcher {
         &self.dispatcher
+    }
+
+    pub fn texture_creator(&mut self) -> &TextureCreator<WindowContext> {
+        &self.texture_creator
     }
 }
 
 pub trait App {
-    fn start(&self);
-    fn resized(&self);
-    fn stop(&self);
+    fn start(&mut self);
+    fn resized(&mut self);
+    fn stop(&mut self);
 }
 
 pub trait DispatchHandler {
     fn register_dispatch(&self, sdl_events: &sdl2::EventSubsystem);
-    fn handle_dispatch(&self, message: &Event) -> bool;
+    fn handle_dispatch(&mut self, message: &Event) -> bool;
 }
 
 pub struct AppRunner {
@@ -100,15 +105,15 @@ struct PostPumpState {
 
 impl AppRunner {
     /// Runs an app inside an event loop.
-    pub fn run<'a, T>(&'a self) 
-    where T: App + DispatchHandler + From<&'a AppSystem> { 
+    pub fn run<'a, T>(&'a mut self) 
+    where T: App + DispatchHandler + From<&'a mut AppSystem> { 
         let mut event_pump = self.sdl_context.event_pump().unwrap();
 
         if self.with_tokio {
             // If you want tokio, initialize it in your main!
         };
 
-        let app = T::from(&self.app_system);
+        let mut app = T::from(&mut self.app_system);
 
         if self.with_dispatch {
             app.register_dispatch(&self.event_subsystem);
@@ -116,61 +121,43 @@ impl AppRunner {
 
         app.start();
 
-        let handle_event = |event: Event, state: &mut PostPumpState| {
-            if event.is_user_event() && app.handle_dispatch(&event) {
-                return;
-            }
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    state.quit = true;
-                },
-                Event::Window {
-                    win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
-                    ..
-                } => {
-                    state.resized = true;
-                }
-                _ => {}
-            }
-        };
+        'running: loop {
+            let mut postpumpstate = PostPumpState{..Default::default()};
 
-        if self.passive {
-            'running: loop {
-                let mut postpumpstate = PostPumpState{..Default::default()};
+            let mut iterator = if self.passive {
+                Some(iter::once(event_pump.wait_event()))
+            } else {
+                None
+            }.into_iter()
+                .flatten()
+                .chain(event_pump.poll_iter());
 
-                for event in iter::once(
-                    event_pump.wait_event()
-                ).chain(
-                    event_pump.poll_iter()
-                ) {
-                    handle_event(event, &mut postpumpstate);
+            for event in iterator {                
+                if event.is_user_event() && app.handle_dispatch(&event) {
+                    return;
                 }
 
-                if postpumpstate.quit {
-                    break 'running;
-                }
-
-                if postpumpstate.resized {
-                    app.resized();
+                match event {
+                    Event::Quit {..} |
+                    Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                        postpumpstate.quit = true;
+                    },
+                    Event::Window {
+                        win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
+                        ..
+                    } => {
+                        postpumpstate.resized = true;
+                    }
+                    _ => {}
                 }
             }
-        } else {
-            'running: loop {
-                let mut postpumpstate = PostPumpState{..Default::default()};
 
-                for event in event_pump.poll_iter() {
-                    handle_event(event, &mut postpumpstate);
-                }
+            if postpumpstate.quit {
+                break 'running;
+            }
 
-                if postpumpstate.quit {
-                    break 'running;
-                }
-
-    
-                if postpumpstate.resized {
-                    app.resized();
-                }
+            if postpumpstate.resized {
+                app.resized();
             }
         }
 
@@ -235,6 +222,7 @@ impl AppBuilder {
             .build()
             .unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
+        let texture_creator = canvas.texture_creator();
         let event_pump = sdl_context.event_pump().unwrap();
 
         let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
@@ -246,6 +234,7 @@ impl AppBuilder {
             event_pump,
             app_system: AppSystem{
                 canvas,
+                texture_creator,
                 dispatcher
             },
             with_tokio: self.with_tokio,

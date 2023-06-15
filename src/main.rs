@@ -2,9 +2,6 @@ mod mandelbrot;
 mod mainapp;
 
 use color_eyre::eyre::Result;
-use std::{
-    vec::Vec
-};
 use salty_broth::sdl_app::*;
 use tokio::{runtime::Runtime};
 
@@ -20,7 +17,7 @@ pub fn main() -> Result<()> {
 
     let tokio = Runtime::new()?;
     let _guard = tokio.enter();
-    apprunner.run::<mainapp::App>();
+    apprunner.run::<mainapp::MainApp>();
 
     Ok(())
 }

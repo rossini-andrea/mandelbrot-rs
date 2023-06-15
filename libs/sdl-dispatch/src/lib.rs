@@ -12,7 +12,7 @@ pub struct SdlDispatcher {
 }
 
 /// A future that gets scheduled in SDL pump
-pub struct SdlPumpTask<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone> {
+pub struct SdlPumpTask<TIn: 'static + Send, TOut: 'static + Send> {
     /// Input data
     input: TIn,
 
@@ -20,7 +20,7 @@ pub struct SdlPumpTask<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone
     shared_state: oneshot::Sender<TOut>,
 }
 
-impl<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug> SdlPumpTask<TIn, TOut> {
+impl<TIn: 'static + Send, TOut: 'static + Send + Debug> SdlPumpTask<TIn, TOut> {
     pub fn input(&self) -> &TIn {
         &self.input
     }
@@ -37,7 +37,7 @@ impl SdlDispatcher {
         }
     }
 
-    pub fn spawn<TIn: 'static + Send + Clone, TOut: 'static + Send + Clone + Debug>(&self, input: TIn) -> oneshot::Receiver<TOut> {
+    pub fn spawn<TIn: 'static + Send, TOut: 'static + Send + Debug>(&self, input: TIn) -> oneshot::Receiver<TOut> {
         let (sender, receiver) = oneshot::channel::<TOut>();
         let task = SdlPumpTask {
             input: input,
