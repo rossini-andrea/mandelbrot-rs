@@ -10,27 +10,29 @@ use sdl2::{
 };
 use sdl_dispatch::SdlDispatcher;
 use std::{
+    rc::Rc,
+    cell::{Ref, RefCell},
     iter,
 };
 
 #[macro_export]
 macro_rules! dispatch_handlers {
     (
-        $app:ident < $( $gen:tt ),+ >,
+        $app:ident $(< $( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+ >)? ,
         $(
-            fn $func_name:ident (&$self:ident, $message:ident : $type:ty )
+            fn $func_name:ident (&mut $self:ident, $message:ident : $type:ty )
             $impl:block
         )
         *
     ) => {
-        impl $app<$($gen,)*> {
+        impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $app $(< $( $lt ),+ >)? {
             $(
-            fn $func_name(&$self, $message: $type)
+            fn $func_name(&mut $self, $message: $type)
                 $impl
             )*
         }
 
-        impl sdl_app::DispatchHandler for $app<$($gen,)*> {
+        impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? sdl_app::DispatchHandler for $app $(< $( $lt ),+ >)? {
             fn handle_dispatch(&mut self, event: &Event ) -> bool {
                 if !event.is_user() {
                     return false;
@@ -56,19 +58,18 @@ macro_rules! dispatch_handlers {
 pub struct AppSystem {
     canvas: Canvas<Window>,
     texture_creator: TextureCreator<WindowContext>,
-    dispatcher: SdlDispatcher,
 }
 
 impl AppSystem {
-    pub fn canvas(&mut self) -> &mut Canvas<Window> {
+    pub fn canvas(&self) -> &Canvas<Window> {
+        &self.canvas
+    }
+
+    pub fn canvas_mut(&mut self) -> &mut Canvas<Window> {
         &mut self.canvas
     }
 
-    pub fn dispatcher(&mut self) -> &SdlDispatcher {
-        &self.dispatcher
-    }
-
-    pub fn texture_creator(&mut self) -> &TextureCreator<WindowContext> {
+    pub fn texture_creator(&self) -> &TextureCreator<WindowContext> {
         &self.texture_creator
     }
 }
@@ -85,13 +86,11 @@ pub trait DispatchHandler {
 }
 
 pub struct AppRunner {
-    sdl_context: Sdl,
-    video_subsystem: VideoSubsystem,
-    event_subsystem: EventSubsystem,
-    event_pump: EventPump,
-    app_system: AppSystem,
+    title: String,
+    window_size: (u32, u32),
     with_tokio: bool,
     with_dispatch: bool,
+    with_egui: bool,
     passive: bool,
 }
 
@@ -105,18 +104,36 @@ struct PostPumpState {
 
 impl AppRunner {
     /// Runs an app inside an event loop.
-    pub fn run<'a, T>(&'a mut self) 
-    where T: App + DispatchHandler + From<&'a mut AppSystem> { 
-        let mut event_pump = self.sdl_context.event_pump().unwrap();
+    pub fn run<T>(&self) 
+    where T: App + DispatchHandler + for<'a> From<&'a mut AppSystem> { 
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let event_subsystem = sdl_context.event().unwrap();
+
+        let window = video_subsystem.window(&self.title, self.window_size.0, self.window_size.1)
+            .resizable()
+            .opengl()
+            .build()
+            .unwrap();
+        let canvas = window.into_canvas().build().unwrap();
+        let texture_creator = canvas.texture_creator();
+        let mut event_pump = sdl_context.event_pump().unwrap();
+        let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
+        let _disp_guard = dispatcher.make_current();
 
         if self.with_tokio {
             // If you want tokio, initialize it in your main!
         };
 
-        let mut app = T::from(&mut self.app_system);
+        let mut app_system = AppSystem {
+            canvas,
+            texture_creator,
+        };
+
+        let mut app = T::from(&mut app_system);
 
         if self.with_dispatch {
-            app.register_dispatch(&self.event_subsystem);
+            app.register_dispatch(&event_subsystem);
         }
 
         app.start();
@@ -124,7 +141,7 @@ impl AppRunner {
         'running: loop {
             let mut postpumpstate = PostPumpState{..Default::default()};
 
-            let mut iterator = if self.passive {
+            let iterator = if self.passive {
                 Some(iter::once(event_pump.wait_event()))
             } else {
                 None
@@ -212,34 +229,13 @@ impl AppBuilder {
     }
 
     pub fn build(&self) -> AppRunner {
-        let sdl_context = sdl2::init().unwrap();
-        let video_subsystem = sdl_context.video().unwrap();
-        let event_subsystem = sdl_context.event().unwrap();
-
-        let window = video_subsystem.window(&self.title, self.window_size.0, self.window_size.1)
-            .resizable()
-            .opengl()
-            .build()
-            .unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
-        let texture_creator = canvas.texture_creator();
-        let event_pump = sdl_context.event_pump().unwrap();
-
-        let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
-
         AppRunner {
-            sdl_context,
-            video_subsystem,
-            event_subsystem,
-            event_pump,
-            app_system: AppSystem{
-                canvas,
-                texture_creator,
-                dispatcher
-            },
+            title: self.title.clone(),
+            window_size: self.window_size,
             with_tokio: self.with_tokio,
             with_dispatch: self.with_dispatch,
-            passive: self.passive
+            with_egui: self.with_egui,
+            passive: self.passive,
         }
     }
 }

@@ -3,6 +3,7 @@ use futures::{
     channel::oneshot,
 };
 use std::{
+    sync::RwLock,
     fmt::Debug,
 };
 
@@ -32,9 +33,11 @@ impl<TIn: 'static + Send, TOut: 'static + Send + Debug> SdlPumpTask<TIn, TOut> {
 
 impl SdlDispatcher {
     pub fn from_eventsubsystem(sdl_events: &sdl2::EventSubsystem) -> Self {
-        Self {
+        let disp = Self {
             event_sender: sdl_events.event_sender().into(),
-        }
+        };
+
+        disp
     }
 
     pub fn spawn<TIn: 'static + Send, TOut: 'static + Send + Debug>(&self, input: TIn) -> oneshot::Receiver<TOut> {
@@ -47,6 +50,50 @@ impl SdlDispatcher {
         self.event_sender.push_custom_event::<SdlPumpTask<TIn, TOut>>(task)
             .expect("Can't push on SDL pump");
         receiver
+    }
+
+    pub fn make_current(self) -> DispatcherGuard {
+        DispatcherGuard::new(self)
+    }
+}
+
+static CURRENTDISPATCHER: RwLock<Option<SdlDispatcher>> = RwLock::new(None);
+
+pub struct DispatcherGuard;
+
+impl DispatcherGuard {
+    fn new(disp: SdlDispatcher) -> Self {
+        let mut r = CURRENTDISPATCHER
+            .write()
+            .unwrap();
+        match r.as_mut() {
+            None => {
+                *r = Some(disp);
+
+                DispatcherGuard
+            }
+            Some(_) => panic!("Cannot have more than one main thread dispatcher systemwide."),
+        }
+    }
+}
+
+impl Drop for DispatcherGuard {
+    fn drop(&mut self) {
+        *CURRENTDISPATCHER
+            .write()
+            .unwrap() = None;
+    }
+}
+
+pub fn spawn<TIn: 'static + Send, TOut: 'static + Send + Debug>(input: TIn) -> oneshot::Receiver<TOut> {
+    let r = CURRENTDISPATCHER
+        .read()
+        .unwrap();
+    match r.as_ref() {
+        Some(disp) => {
+            disp.spawn::<TIn, TOut>(input)
+        }
+        None => panic!("Cannot dispatch without a currently running event pump."),
     }
 }
 
