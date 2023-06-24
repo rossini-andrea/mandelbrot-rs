@@ -3,7 +3,7 @@ mod mainapp;
 
 use color_eyre::eyre::Result;
 use salty_broth::sdl_app::*;
-use tokio::{runtime::Runtime};
+use tokio::runtime::Runtime;
 
 pub fn main() -> Result<()> {
     color_eyre::install()?;

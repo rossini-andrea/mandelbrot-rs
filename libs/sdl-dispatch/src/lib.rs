@@ -1,7 +1,5 @@
 use sdl2::event::{Event, EventSender};
-use futures::{
-    channel::oneshot,
-};
+use futures::channel::oneshot;
 use std::{
     sync::RwLock,
     fmt::Debug,

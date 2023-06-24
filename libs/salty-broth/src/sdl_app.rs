@@ -1,19 +1,11 @@
 use sdl2::{
-    Sdl,
-    VideoSubsystem,
-    EventSubsystem,
-    EventPump,
     event::{Event, WindowEvent},
     keyboard::Keycode,
-    render::{Canvas, TextureCreator},
-    video::{Window, WindowContext},
+    render::Canvas,
+    video::Window,
 };
 use sdl_dispatch::SdlDispatcher;
-use std::{
-    rc::Rc,
-    cell::{Ref, RefCell},
-    iter,
-};
+use std::iter;
 
 #[macro_export]
 macro_rules! dispatch_handlers {
