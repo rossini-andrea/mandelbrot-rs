@@ -126,7 +126,7 @@ impl AppRunner {
 
             for event in iterator {                
                 if event.is_user_event() && app.handle_dispatch(&event) {
-                    return;
+                    continue;
                 }
 
                 match event {

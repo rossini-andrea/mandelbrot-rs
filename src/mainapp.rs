@@ -4,12 +4,12 @@ use salty_broth::{
 };
 use sdl_dispatch::SdlPumpTask;
 use sdl2::{
-    render::{ Canvas, Texture, TextureCreator, TextureValueError },
+    render::{ Canvas, Texture, TextureCreator },
     video::{ Window, WindowContext },
     event::Event,
     pixels::PixelFormatEnum,
 };
-use std::{rc::Rc, cell::RefCell};
+use std::mem;
 use tokio::{
     time,
     time::Duration,
@@ -49,6 +49,8 @@ impl From<Canvas<Window>> for MainApp {
 
 impl Drop for MainApp {
     fn drop(&mut self) {
+        unsafe {
+        }
     }
 }
 
@@ -73,7 +75,7 @@ impl sdl_app::App for MainApp {
 
         self.resize_timer_task = Some(tokio::spawn(async move {
             time::sleep(Duration::from_millis(1000)).await;
-            sdl_dispatch::spawn::<ResizeTexture, ()>(ResizeTexture{}).await;
+            let _ = sdl_dispatch::spawn::<ResizeTexture, ()>(ResizeTexture{}).await;
         }));
     }
 
@@ -94,10 +96,17 @@ dispatch_handlers! {
 
     fn resize_texture(&mut self, task: SdlPumpTask<ResizeTexture, ()>) {
         (self.w, self.h) = self.canvas.output_size().unwrap();
-        self.texture = self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
-            .unwrap();
+    
+        unsafe {
+            mem::replace(
+                &mut self.texture,
+                self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
+                .unwrap()
+            ).destroy();
+        }
+
         task.complete(());
-        // TODO: Dispatch a redraw message.
+        sdl_dispatch::send::<Redraw>(Redraw{});
     }
 
     fn redraw(&mut self, _msg: Redraw) {
@@ -119,7 +128,7 @@ dispatch_handlers! {
                 &vec![(255, 255, 255), (0, 0, 0)],
                 cancellation_token_clone
             ).await {
-                sdl_dispatch::spawn::<MandelbrotReady, ()>(MandelbrotReady{buf}).await;
+                let _ = sdl_dispatch::spawn::<MandelbrotReady, ()>(MandelbrotReady{buf}).await;
             }
         }), cancellation_token));
     }

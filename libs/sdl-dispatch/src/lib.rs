@@ -43,13 +43,18 @@ impl SdlDispatcher {
     pub fn spawn<TIn: 'static + Send, TOut: 'static + Send + Debug>(&self, input: TIn) -> oneshot::Receiver<TOut> {
         let (sender, receiver) = oneshot::channel::<TOut>();
         let task = SdlPumpTask {
-            input: input,
+            input,
             shared_state: sender,
         };
 
         self.event_sender.push_custom_event::<SdlPumpTask<TIn, TOut>>(task)
             .expect("Can't push on SDL pump");
         receiver
+    }
+
+    pub fn send<TIn: 'static + Send>(&self, input: TIn) {
+        self.event_sender.push_custom_event::<TIn>(input)
+            .expect("Can't push on SDL pump");
     }
 
     pub fn make_current(self) -> DispatcherGuard {
@@ -92,6 +97,18 @@ pub fn spawn<TIn: 'static + Send, TOut: 'static + Send + Debug>(input: TIn) -> o
     match r.as_ref() {
         Some(disp) => {
             disp.spawn::<TIn, TOut>(input)
+        }
+        None => panic!("Cannot dispatch without a currently running event pump."),
+    }
+}
+
+pub fn send<TIn: 'static + Send>(input: TIn) {
+    let r = CURRENTDISPATCHER
+        .read()
+        .unwrap();
+    match r.as_ref() {
+        Some(disp) => {
+            disp.send::<TIn>(input)
         }
         None => panic!("Cannot dispatch without a currently running event pump."),
     }
