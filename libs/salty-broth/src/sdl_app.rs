@@ -55,25 +55,6 @@ macro_rules! dispatch_handlers {
     }
 }
 
-pub struct AppSystem {
-    canvas: Canvas<Window>,
-    texture_creator: TextureCreator<WindowContext>,
-}
-
-impl AppSystem {
-    pub fn canvas(&self) -> &Canvas<Window> {
-        &self.canvas
-    }
-
-    pub fn canvas_mut(&mut self) -> &mut Canvas<Window> {
-        &mut self.canvas
-    }
-
-    pub fn texture_creator(&self) -> &TextureCreator<WindowContext> {
-        &self.texture_creator
-    }
-}
-
 pub trait App {
     fn start(&mut self);
     fn resized(&mut self);
@@ -105,7 +86,7 @@ struct PostPumpState {
 impl AppRunner {
     /// Runs an app inside an event loop.
     pub fn run<T>(&self) 
-    where T: App + DispatchHandler + for<'a> From<&'a mut AppSystem> { 
+    where T: App + DispatchHandler + From<Canvas<Window>> { 
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let event_subsystem = sdl_context.event().unwrap();
@@ -116,7 +97,6 @@ impl AppRunner {
             .build()
             .unwrap();
         let canvas = window.into_canvas().build().unwrap();
-        let texture_creator = canvas.texture_creator();
         let mut event_pump = sdl_context.event_pump().unwrap();
         let dispatcher = SdlDispatcher::from_eventsubsystem(&event_subsystem);
         let _disp_guard = dispatcher.make_current();
@@ -125,12 +105,7 @@ impl AppRunner {
             // If you want tokio, initialize it in your main!
         };
 
-        let mut app_system = AppSystem {
-            canvas,
-            texture_creator,
-        };
-
-        let mut app = T::from(&mut app_system);
+        let mut app = T::from(canvas);
 
         if self.with_dispatch {
             app.register_dispatch(&event_subsystem);

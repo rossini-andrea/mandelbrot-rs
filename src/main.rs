@@ -17,7 +17,7 @@ pub fn main() -> Result<()> {
 
     let tokio = Runtime::new()?;
     let _guard = tokio.enter();
-    apprunner.run::<mainapp::MainApp<'static>>();
+    apprunner.run::<mainapp::MainApp>();
  
     Ok(())
 }

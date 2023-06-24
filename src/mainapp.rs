@@ -1,16 +1,15 @@
 use salty_broth::{
     dispatch_handlers,
     sdl_app,
-    sdl_app::{AppSystem},
 };
 use sdl_dispatch::SdlPumpTask;
 use sdl2::{
-    render::{ Canvas, Texture, TextureCreator },
+    render::{ Canvas, Texture, TextureCreator, TextureValueError },
     video::{ Window, WindowContext },
     event::Event,
     pixels::PixelFormatEnum,
 };
-use std::cell::RefCell;
+use std::{rc::Rc, cell::RefCell};
 use tokio::{
     time,
     time::Duration,
@@ -21,23 +20,25 @@ use crate::mandelbrot;
 
 type Real = f64;
 
-pub struct MainApp<'a> {
-    app_system: &'a mut AppSystem,
+/// Represents the handler for SDL events, keeps track of redraw
+/// processes.
+pub struct MainApp {
+    canvas: Canvas<Window>,
+    texture_creator: TextureCreator<WindowContext>,
     resize_timer_task: Option<JoinHandle<()>>, 
     mandelbrot_task: Option<(JoinHandle<()>, CancellationToken)>,
-    texture: RefCell<Texture<'a>>,
+    texture: Texture,
     w: u32, h: u32,
 }
 
-impl From<&mut AppSystem> for MainApp<'_> {
-    fn from(app_system: &mut AppSystem) -> Self {
-        let sys = app_system;
-        let (w, h) = sys.canvas().output_size().unwrap();
-        let texture = RefCell::new(
-            sys.texture_creator().create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap()
-        );
+impl From<Canvas<Window>> for MainApp {
+    fn from(canvas: Canvas<Window>) -> Self {
+        let (w, h) = canvas.output_size().unwrap();
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
         Self {
-            app_system: sys,
+            canvas,
+            texture_creator,
             resize_timer_task: None, 
             mandelbrot_task: None, 
             texture,
@@ -46,12 +47,20 @@ impl From<&mut AppSystem> for MainApp<'_> {
     }
 }
 
-impl sdl_app::App for MainApp<'_> {
+impl Drop for MainApp {
+    fn drop(&mut self) {
+    }
+}
+
+impl sdl_app::App for MainApp {
+    /// Application start does simply clear the main window.
     fn start(&mut self) {
-        self.app_system.canvas_mut().clear();
-        self.app_system.canvas_mut().present();
+        self.canvas.clear();
+        self.canvas.present();
     }
 
+    /// When the application is resized we launch an asynchronous
+    /// wait of 1 second, aborting any other task.
     fn resized(&mut self) {
         if let Some(task) = self.resize_timer_task.take() {
             task.abort();
@@ -68,6 +77,7 @@ impl sdl_app::App for MainApp<'_> {
         }));
     }
 
+    /// Stop should handle the return value to the main loop.
     fn stop(&mut self) {
 
     }
@@ -80,15 +90,12 @@ struct MandelbrotReady {
 }
 
 dispatch_handlers! {
-    MainApp<'a> ,
+    MainApp ,
 
     fn resize_texture(&mut self, task: SdlPumpTask<ResizeTexture, ()>) {
-        (self.w, self.h) = self.app_system.canvas().output_size().unwrap();
-        self.texture = self.app_system
-            .texture_creator()
-            .create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
-            .unwrap()
-            .into();
+        (self.w, self.h) = self.canvas.output_size().unwrap();
+        self.texture = self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
+            .unwrap();
         task.complete(());
         // TODO: Dispatch a redraw message.
     }
@@ -121,7 +128,7 @@ dispatch_handlers! {
         let image = &task.input().buf;
 
         // Lock texture and copy data
-        self.texture.borrow_mut().with_lock(None, |buf, pitch| {
+        self.texture.with_lock(None, |buf, pitch| {
             for y in 0..self.h {
                 for x in 0..self.w {
                     let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
@@ -137,9 +144,8 @@ dispatch_handlers! {
 
         task.complete(());
 
-        let canvas = self.app_system.canvas_mut();
-        canvas.clear();
-        canvas.copy(&self.texture.borrow(), None, None);
-        canvas.present();
+        self.canvas.clear();
+        self.canvas.copy(&self.texture, None, None);
+        self.canvas.present();
     }
 }
