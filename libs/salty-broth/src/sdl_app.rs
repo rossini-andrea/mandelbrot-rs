@@ -78,7 +78,7 @@ struct PostPumpState {
 impl AppRunner {
     /// Runs an app inside an event loop.
     pub fn run<T>(&self) 
-    where T: App + DispatchHandler + From<Canvas<Window>> { 
+    where T: App + DispatchHandler + TryFrom<Canvas<Window>>, <T as TryFrom<Canvas<sdl2::video::Window>>>::Error: std::fmt::Debug { 
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let event_subsystem = sdl_context.event().unwrap();
@@ -97,7 +97,7 @@ impl AppRunner {
             // If you want tokio, initialize it in your main!
         };
 
-        let mut app = T::from(canvas);
+        let mut app = T::try_from(canvas).unwrap();
 
         if self.with_dispatch {
             app.register_dispatch(&event_subsystem);

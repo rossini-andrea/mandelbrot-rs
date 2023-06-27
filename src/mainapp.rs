@@ -1,3 +1,4 @@
+use color_eyre::Result;
 use salty_broth::{
     dispatch_handlers,
     sdl_app,
@@ -25,25 +26,28 @@ type Real = f64;
 pub struct MainApp {
     canvas: Canvas<Window>,
     texture_creator: TextureCreator<WindowContext>,
-    resize_timer_task: Option<JoinHandle<()>>, 
-    mandelbrot_task: Option<(JoinHandle<()>, CancellationToken)>,
+    resize_timer_task: Option<JoinHandle<Result<(), String>>>, 
+    mandelbrot_task: Option<(JoinHandle<Result<(), String>>, CancellationToken)>,
     texture: Texture,
     w: u32, h: u32,
 }
 
-impl From<Canvas<Window>> for MainApp {
-    fn from(canvas: Canvas<Window>) -> Self {
-        let (w, h) = canvas.output_size().unwrap();
+impl TryFrom<Canvas<Window>> for MainApp {
+    type Error = String;
+
+    fn try_from(canvas: Canvas<Window>) -> Result<Self, Self::Error> {
+        let (w, h) = canvas.output_size()?;
         let texture_creator = canvas.texture_creator();
-        let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h).unwrap();
-        Self {
+        let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h)
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
             canvas,
             texture_creator,
             resize_timer_task: None, 
             mandelbrot_task: None, 
             texture,
             w, h
-        }
+        })
     }
 }
 
@@ -75,7 +79,9 @@ impl sdl_app::App for MainApp {
 
         self.resize_timer_task = Some(tokio::spawn(async move {
             time::sleep(Duration::from_millis(1000)).await;
-            let _ = sdl_dispatch::spawn::<ResizeTexture, ()>(ResizeTexture{}).await;
+            sdl_dispatch::spawn::<ResizeTexture, Result<(), String>>(ResizeTexture{}).await
+                .map_err(|e| e.to_string())??;
+            Ok(())
         }));
     }
 
@@ -94,19 +100,23 @@ struct MandelbrotReady {
 dispatch_handlers! {
     MainApp ,
 
-    fn resize_texture(&mut self, task: SdlPumpTask<ResizeTexture, ()>) {
-        (self.w, self.h) = self.canvas.output_size().unwrap();
-    
-        unsafe {
-            mem::replace(
-                &mut self.texture,
-                self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
-                .unwrap()
-            ).destroy();
-        }
+    fn resize_texture(&mut self, task: SdlPumpTask<ResizeTexture, Result<(), String>>) {
+        let result = (|| -> Result<(), String> {
+            (self.w, self.h) = self.canvas.output_size()?;
+        
+            unsafe {
+                mem::replace(
+                    &mut self.texture,
+                    self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
+                        .map_err(|e| e.to_string())?
+                ).destroy();
+            }
 
-        task.complete(());
-        sdl_dispatch::send::<Redraw>(Redraw{});
+            sdl_dispatch::send::<Redraw>(Redraw{});
+            Ok(())
+        })();
+    
+        task.complete(result);
     }
 
     fn redraw(&mut self, _msg: Redraw) {
@@ -120,7 +130,7 @@ dispatch_handlers! {
         let (w, h) = (self.w, self. h);
         self.mandelbrot_task = Some((tokio::spawn(async move{
             let scale: Real = 4.0 / Real::from(h);
-            if let Some(buf) = mandelbrot::mandelbrot_set(
+            if let Some(buf) = mandelbrot::compute_set(
                 - Real::from(w / 2) * scale,
                 - Real::from(h / 2) * scale,
                 scale,
@@ -128,33 +138,42 @@ dispatch_handlers! {
                 &vec![(255, 255, 255), (0, 0, 0)],
                 cancellation_token_clone
             ).await {
-                let _ = sdl_dispatch::spawn::<MandelbrotReady, ()>(MandelbrotReady{buf}).await;
+                sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(MandelbrotReady{buf})
+                    .await
+                    .map_err(|_| "Task canceled")??;
             }
+
+            Ok(())
         }), cancellation_token));
     }
 
-    fn mandelbrot_ready(&mut self, task: SdlPumpTask<MandelbrotReady, ()>) {
-        let image = &task.input().buf;
+    fn mandelbrot_ready(&mut self, task: SdlPumpTask<MandelbrotReady, Result<(), String>>) {
+        let result: Result<(), String> = (|| {
+            let image = &task.input().buf;
 
-        // Lock texture and copy data
-        self.texture.with_lock(None, |buf, pitch| {
-            for y in 0..self.h {
-                for x in 0..self.w {
-                    let pixel_index = usize::try_from(pitch as u32 * y + x * 3).unwrap();
-                    let mandelbrot_index = usize::try_from(self.w * y + x).unwrap();
-                    (
-                        buf[pixel_index],
-                        buf[pixel_index + 1],
-                        buf[pixel_index + 2]
-                    ) = image[mandelbrot_index];
+            // Lock texture and copy data
+            _ = self.texture.with_lock(None, |buf, pitch| -> Result<(), String> {
+                for y in 0..self.h as usize {
+                    for x in 0..self.w as usize {
+                        let pixel_index = pitch * y + x * 3;
+                        let mandelbrot_index = self.w as usize * y + x;
+                        (
+                            buf[pixel_index],
+                            buf[pixel_index + 1],
+                            buf[pixel_index + 2]
+                        ) = image[mandelbrot_index];
+                    }
                 }
-            }
-        });
 
-        task.complete(());
+                Ok(())
+            })?;
 
-        self.canvas.clear();
-        self.canvas.copy(&self.texture, None, None);
-        self.canvas.present();
+            self.canvas.clear();
+            self.canvas.copy(&self.texture, None, None)?;
+            self.canvas.present();
+            Ok(())
+        })();
+
+        task.complete(result);
     }
 }

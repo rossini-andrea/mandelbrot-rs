@@ -54,11 +54,11 @@ pub fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool,
 }
 
 
-pub async fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
-    let mut set = vec![(false, 0usize); usize::try_from(w * h).unwrap()];
+pub async fn compute_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
+    let mut set = vec![(false, 0usize); w * h];
     let mut hist = vec![0usize; maxiter + 1];
 
-    let mut tasks = Vec::<JoinHandle<(bool, usize)>>::with_capacity(usize::try_from(w * h).unwrap());
+    let mut tasks = Vec::<JoinHandle<(bool, usize)>>::with_capacity(w * h);
 
     for y in 0..h {
         for x in 0..w {
@@ -82,10 +82,10 @@ pub async fn mandelbrot_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real
     Some((set, hist))
 }
 
-pub async fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
-    let (set, hist) = match mandelbrot_set_inner(x_left, y_bottom, scale, w, h, maxiter, ct.clone()).await {
-        Some(r) => r,
-        None => { return None; }
+pub async fn compute_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
+    let Some((set, hist)) = compute_set_inner(x_left, y_bottom, scale, w, h, maxiter, ct.clone())
+    .await else {
+        return None;
     };
     let mut color_remap = vec![0usize; maxiter + 1];
     let pixel_count = w * h;
@@ -98,7 +98,7 @@ pub async fn mandelbrot_set<Real: Arithmetic>(x_left: Real, y_bottom: Real, scal
         let color_index = if b {
             pixel_count 
         } else if color_remap[i] == 0 {
-            let c = hist.clone().into_iter().take(i).fold(0, |a, b| a + b);
+            let c = hist.clone().into_iter().take(i).sum();
             color_remap[i] = c;
             c
         } else {

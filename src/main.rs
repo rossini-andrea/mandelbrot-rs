@@ -2,7 +2,7 @@ mod mandelbrot;
 mod mainapp;
 
 use color_eyre::eyre::Result;
-use salty_broth::sdl_app::*;
+use salty_broth::sdl_app::AppBuilder;
 use tokio::runtime::Runtime;
 
 pub fn main() -> Result<()> {
