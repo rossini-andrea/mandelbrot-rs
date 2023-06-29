@@ -51,6 +51,7 @@ pub trait App {
     fn start(&mut self);
     fn resized(&mut self);
     fn stop(&mut self);
+    fn sdl_event(&mut self, event: Event);
 }
 
 pub trait DispatchHandler {
@@ -132,7 +133,7 @@ impl AppRunner {
                     } => {
                         postpumpstate.resized = true;
                     }
-                    _ => {}
+                    _ => app.sdl_event(event),
                 }
             }
 

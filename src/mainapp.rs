@@ -5,10 +5,12 @@ use salty_broth::{
 };
 use sdl_dispatch::SdlPumpTask;
 use sdl2::{
-    render::{ Canvas, Texture, TextureCreator },
+    render::{ Canvas, RenderTarget, Texture, TextureCreator },
     video::{ Window, WindowContext },
     event::Event,
-    pixels::PixelFormatEnum,
+    mouse::MouseButton,
+    pixels::{ Color, PixelFormatEnum },
+    rect::{ Rect, Point },
 };
 use std::mem;
 use tokio::{
@@ -18,6 +20,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use crate::mandelbrot;
+use crate::mathutils;
 
 type Real = f64;
 
@@ -30,6 +33,8 @@ pub struct MainApp {
     mandelbrot_task: Option<(JoinHandle<Result<(), String>>, CancellationToken)>,
     texture: Texture,
     w: u32, h: u32,
+    selection_center: Option<Point>,
+    selection: Option<Rect>,
 }
 
 impl TryFrom<Canvas<Window>> for MainApp {
@@ -46,7 +51,9 @@ impl TryFrom<Canvas<Window>> for MainApp {
             resize_timer_task: None, 
             mandelbrot_task: None, 
             texture,
-            w, h
+            w, h,
+            selection_center: None,
+            selection: None,
         })
     }
 }
@@ -88,6 +95,34 @@ impl sdl_app::App for MainApp {
     /// Stop should handle the return value to the main loop.
     fn stop(&mut self) {
 
+    }
+
+    fn sdl_event(&mut self, event: Event) {
+        match event {
+            Event::MouseButtonDown{ mouse_btn: MouseButton::Left, x, y, ..} => {
+                self.selection_center = Some(Point::new(x, y))
+            },
+            Event::MouseMotion{x, y, ..} => {
+                if let Some(center) = self.selection_center {
+                    self.selection = Some(mathutils::selection_from_center_with_ratio(
+                        center,
+                        Point::new(x, y),
+                        self.w as f32 / self.h as f32
+                    ));
+                    if let Some(err) = self.render().err() {
+                        println!("{}", err);
+                    }
+                }
+            },
+            Event::MouseButtonUp{mouse_btn: MouseButton::Left, x, y, ..} => {
+                self.selection_center = None;
+                self.selection = None;
+                if let Some(err) = self.render().err() {
+                    println!("{}", err);
+                }
+            },
+            _ => {}
+        }
     }
 }
 
@@ -168,12 +203,26 @@ dispatch_handlers! {
                 Ok(())
             })?;
 
-            self.canvas.clear();
-            self.canvas.copy(&self.texture, None, None)?;
-            self.canvas.present();
+            self.render()?;
             Ok(())
         })();
 
         task.complete(result);
     }
 }
+
+impl MainApp {
+    fn render(&mut self) -> Result<(), String> {
+        self.canvas.clear();
+        self.canvas.copy(&self.texture, None, None)?;
+
+        if let Some(rect) = self.selection {
+            self.canvas.set_draw_color(Color::RGB(255, 0, 0));
+            self.canvas.draw_rect(rect)?;
+        }
+        
+        self.canvas.present();
+        Ok(())
+    }
+}
+

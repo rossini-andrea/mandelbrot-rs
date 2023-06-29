@@ -1,5 +1,6 @@
 mod mandelbrot;
 mod mainapp;
+mod mathutils;
 
 use color_eyre::eyre::Result;
 use salty_broth::sdl_app::AppBuilder;
