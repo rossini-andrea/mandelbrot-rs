@@ -35,6 +35,7 @@ pub struct MainApp {
     w: u32, h: u32,
     selection_center: Option<Point>,
     selection: Option<Rect>,
+    sector: mandelbrot::Sector<Real>,
 }
 
 impl TryFrom<Canvas<Window>> for MainApp {
@@ -45,6 +46,7 @@ impl TryFrom<Canvas<Window>> for MainApp {
         let texture_creator = canvas.texture_creator();
         let texture = texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, w, h)
             .map_err(|e| e.to_string())?;
+        let scale: Real = 4.0 / Real::from(h);
         Ok(Self {
             canvas,
             texture_creator,
@@ -54,6 +56,12 @@ impl TryFrom<Canvas<Window>> for MainApp {
             w, h,
             selection_center: None,
             selection: None,
+            sector: mandelbrot::Sector::new(
+                - Real::from(w / 2) * scale,
+                - Real::from(h / 2) * scale,
+                scale,
+                w as usize, h as usize
+            ),
         })
     }
 }
@@ -115,6 +123,16 @@ impl sdl_app::App for MainApp {
                 }
             },
             Event::MouseButtonUp{mouse_btn: MouseButton::Left, x, y, ..} => {
+                if let Some(center) = self.selection_center {
+                    let selection = mathutils::selection_from_center_with_ratio(
+                        center,
+                        Point::new(x, self.h as i32 - y),
+                        self.w as f32 / self.h as f32
+                    );
+                    self.sector = self.sector.zoom_to_selection(selection);
+                    sdl_dispatch::send::<Redraw>(Redraw{});
+                }
+
                 self.selection_center = None;
                 self.selection = None;
                 if let Some(err) = self.render().err() {
@@ -161,24 +179,23 @@ dispatch_handlers! {
         }
 
         let cancellation_token = CancellationToken::new();
-        let cancellation_token_clone = cancellation_token.clone();
-        let (w, h) = (self.w, self. h);
-        self.mandelbrot_task = Some((tokio::spawn(async move{
-            let scale: Real = 4.0 / Real::from(h);
-            if let Some(buf) = mandelbrot::compute_set(
-                - Real::from(w / 2) * scale,
-                - Real::from(h / 2) * scale,
-                scale,
-                w as usize, h as usize, 20000,
-                &vec![(255, 255, 255), (0, 0, 0)],
-                cancellation_token_clone
-            ).await {
-                sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(MandelbrotReady{buf})
-                    .await
-                    .map_err(|_| "Task canceled")??;
-            }
+        
+        self.mandelbrot_task = Some((tokio::spawn({
+            let sector = self.sector.clone();
+            let cancellation_token_clone = cancellation_token.clone();
+            async move{
+                if let Some(buf) = sector.compute(
+                    20000,
+                    &vec![(255, 255, 255), (0, 0, 0)],
+                    cancellation_token_clone
+                ).await {
+                    sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(MandelbrotReady{buf})
+                        .await
+                        .map_err(|_| "Task canceled")??;
+                }
 
-            Ok(())
+                Ok(())
+            }
         }), cancellation_token));
     }
 
