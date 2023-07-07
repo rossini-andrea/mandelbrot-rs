@@ -92,6 +92,16 @@ impl<Real: Arithmetic> Sector<Real> {
             self.h
         )
     }
+
+    pub fn fit_size(&self, w: usize, h: usize) -> Self {
+        Self::new(
+            self.left - Real::from(w as i32 - self.w as i32) * self.scale / 2.0f32.into(),
+            self.bottom - Real::from(h as i32- self.h as i32) * self.scale / 2.0f32.into(),
+            self.scale,
+            w,
+            h
+        )
+    }
 }
 
 fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool, usize) {

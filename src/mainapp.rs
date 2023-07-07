@@ -2,20 +2,24 @@ use color_eyre::Result;
 use salty_broth::{
     dispatch_handlers,
     sdl_app,
+    time::Ticker,
 };
 use sdl_dispatch::SdlPumpTask;
 use sdl2::{
-    render::{ Canvas, RenderTarget, Texture, TextureCreator },
+    render::{ Canvas, Texture, TextureCreator },
     video::{ Window, WindowContext },
     event::Event,
     mouse::MouseButton,
     pixels::{ Color, PixelFormatEnum },
     rect::{ Rect, Point },
 };
-use std::mem;
+use std::{
+    mem,
+    pin::Pin,
+};
 use tokio::{
     time,
-    time::Duration,
+    time::{ Duration, Instant },
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
@@ -29,7 +33,7 @@ type Real = f64;
 pub struct MainApp {
     canvas: Canvas<Window>,
     texture_creator: TextureCreator<WindowContext>,
-    resize_timer_task: Option<JoinHandle<Result<(), String>>>, 
+    resize_timer: Option<Ticker>, 
     mandelbrot_task: Option<(JoinHandle<Result<(), String>>, CancellationToken)>,
     texture: Texture,
     w: u32, h: u32,
@@ -50,8 +54,8 @@ impl TryFrom<Canvas<Window>> for MainApp {
         Ok(Self {
             canvas,
             texture_creator,
-            resize_timer_task: None, 
-            mandelbrot_task: None, 
+            resize_timer: None, 
+            mandelbrot_task: None,
             texture,
             w, h,
             selection_center: None,
@@ -83,21 +87,23 @@ impl sdl_app::App for MainApp {
     /// When the application is resized we launch an asynchronous
     /// wait of 1 second, aborting any other task.
     fn resized(&mut self) {
-        if let Some(task) = self.resize_timer_task.take() {
-            task.abort();
-        }
-
         if let Some((task, token)) = self.mandelbrot_task.take() {
             token.cancel();
             task.abort();
         }
 
-        self.resize_timer_task = Some(tokio::spawn(async move {
-            time::sleep(Duration::from_millis(1000)).await;
-            sdl_dispatch::spawn::<ResizeTexture, Result<(), String>>(ResizeTexture{}).await
-                .map_err(|e| e.to_string())??;
-            Ok(())
-        }));
+        self.resize_timer = Some(Ticker::once(
+            Duration::from_millis(1000),
+            || {
+/*                async {
+                    sdl_dispatch::spawn::<ResizeTexture, Result<(), String>>(ResizeTexture{}).await
+                        .map_err(|e| e.to_string())??;
+                    Result::<(), String>::Ok(())
+                }*/
+
+                sdl_dispatch::send::<ResizeTexture>(ResizeTexture{});
+            }
+        ));
     }
 
     /// Stop should handle the return value to the main loop.
@@ -153,8 +159,8 @@ struct MandelbrotReady {
 dispatch_handlers! {
     MainApp ,
 
-    fn resize_texture(&mut self, task: SdlPumpTask<ResizeTexture, Result<(), String>>) {
-        let result = (|| -> Result<(), String> {
+    fn resize_texture(&mut self, task: ResizeTexture) {
+        let _ = (|| -> Result<(), String> {
             (self.w, self.h) = self.canvas.output_size()?;
         
             unsafe {
@@ -165,11 +171,13 @@ dispatch_handlers! {
                 ).destroy();
             }
 
+            self.sector = self.sector.fit_size(self.w as usize, self.h as usize);
+
             sdl_dispatch::send::<Redraw>(Redraw{});
             Ok(())
         })();
     
-        task.complete(result);
+//        task.complete(result);
     }
 
     fn redraw(&mut self, _msg: Redraw) {
