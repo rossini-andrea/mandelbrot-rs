@@ -73,7 +73,7 @@ impl<Real: Arithmetic> Sector<Real> {
                 color_remap[i]
             } * (palette.len() - 1) / pixel_count;
 
-            palette[color_index]
+            palette[palette.len() - color_index - 1]
         }).collect();
 
         if ct.is_cancelled() {

@@ -194,7 +194,7 @@ dispatch_handlers! {
             async move{
                 if let Some(buf) = sector.compute(
                     20000,
-                    &vec![(255, 255, 255), (0, 0, 0)],
+                    &vec![(0, 0, 0), (255, 255, 255)],
                     cancellation_token_clone
                 ).await {
                     sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(MandelbrotReady{buf})
