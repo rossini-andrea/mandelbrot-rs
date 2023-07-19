@@ -15,7 +15,7 @@ use sdl2::{
 };
 use std::{
     mem,
-    pin::Pin,
+    pin::Pin, ptr::{null, null_mut},
 };
 use tokio::{
     time,
@@ -73,6 +73,11 @@ impl TryFrom<Canvas<Window>> for MainApp {
 impl Drop for MainApp {
     fn drop(&mut self) {
         unsafe {
+            mem::replace(
+                &mut self.texture,
+                self.texture_creator
+                    .raw_create_texture(null_mut())
+            ).destroy();
         }
     }
 }
