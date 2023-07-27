@@ -36,7 +36,7 @@ impl <T:
 
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Sector<Real: Arithmetic> {
     left: Real,
     bottom: Real,
@@ -45,42 +45,32 @@ pub struct Sector<Real: Arithmetic> {
     h: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MandelbrotSetWithHistogram {
+    set: Vec<(bool, usize)>,
+    hist: Vec<usize>,
+    maxiter: usize,
+}
+
 impl<Real: Arithmetic> Sector<Real> {
     pub fn new(left: Real, bottom: Real, scale: Real, w: usize, h: usize) -> Self {
         Self { left, bottom, scale, w, h }
     }
 
-    pub async fn compute(self, maxiter: usize, palette: &Vec<(u8, u8, u8)>, ct: CancellationToken) -> Option<Vec<(u8, u8, u8)>> {
+    pub async fn compute(
+        self,
+        maxiter: usize,
+        ct: CancellationToken
+    ) -> Option<MandelbrotSetWithHistogram> {
         let Some((set, hist)) = compute_set_inner(self.left, self.bottom, self.scale, self.w, self.h, maxiter, ct.clone())
         .await else {
             return None;
         };
-        let mut color_remap = vec![0usize; maxiter + 1];
-        let pixel_count = self.w * self.h;
-
-        if ct.is_cancelled() {
-            return None;
-        }
-
-        let buf: Vec<(u8, u8, u8)> = set.into_iter().map(|(b, i)| {
-            let color_index = if b {
-                pixel_count 
-            } else if color_remap[i] == 0 {
-                let c = hist.clone().into_iter().take(i).sum();
-                color_remap[i] = c;
-                c
-            } else {
-                color_remap[i]
-            } * (palette.len() - 1) / pixel_count;
-
-            palette[palette.len() - color_index - 1]
-        }).collect();
-
-        if ct.is_cancelled() {
-            return None;
-        }
-
-        Some(buf)
+        Some(MandelbrotSetWithHistogram {
+            set,
+            hist,
+            maxiter
+        })
     }
 
     pub fn zoom_to_selection(&self, selection: Rect) -> Self {
@@ -122,8 +112,15 @@ fn bounded<Real: Arithmetic>((a, b): (Real, Real), maxiter: usize) -> (bool, usi
     (true, i)
 }
 
-
-async fn compute_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale: Real, w: usize, h: usize, maxiter: usize, ct: CancellationToken) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
+async fn compute_set_inner<Real: Arithmetic>(
+    x_left: Real,
+    y_bottom: Real,
+    scale: Real,
+    w: usize,
+    h: usize,
+    maxiter: usize,
+    ct: CancellationToken
+) -> Option<(Vec<(bool, usize)>, Vec<usize>)> {
     let mut set = vec![(false, 0usize); w * h];
     let mut hist = vec![0usize; maxiter + 1];
 
@@ -151,3 +148,31 @@ async fn compute_set_inner<Real: Arithmetic>(x_left: Real, y_bottom: Real, scale
     Some((set, hist))
 }
 
+impl MandelbrotSetWithHistogram {
+    pub fn get_image_from_palette(
+        &self,
+        palette: &Vec<(u8, u8, u8)>
+    ) -> Vec<(u8, u8, u8)> {
+        let mut color_remap = vec![0usize; self.maxiter + 1];
+        let pixel_count = self.set.len();
+
+        let buf: Vec<(u8, u8, u8)> = self.set.iter().map(|(b, i)| {
+            let color_index = if *b {
+                pixel_count 
+            } else if color_remap[*i] == 0 {
+                let c = self.hist
+                    .iter()
+                    .take(*i)
+                    .sum();
+                color_remap[*i] = c;
+                c
+            } else {
+                color_remap[*i]
+            } * (palette.len() - 1) / pixel_count;
+
+            palette[palette.len() - color_index - 1]
+        }).collect();
+
+        buf
+    }
+}

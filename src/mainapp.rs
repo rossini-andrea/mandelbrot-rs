@@ -1,4 +1,6 @@
 use color_eyre::Result;
+use gimp_palette::{Palette, NewPaletteError};
+use rfd::AsyncFileDialog;
 use salty_broth::{
     dispatch_handlers,
     sdl_app,
@@ -9,21 +11,22 @@ use sdl2::{
     render::{ Canvas, Texture, TextureCreator },
     video::{ Window, WindowContext },
     event::Event,
+    keyboard::Keycode,
     mouse::MouseButton,
     pixels::{ Color, PixelFormatEnum },
     rect::{ Rect, Point },
 };
 use std::{
     mem,
-    pin::Pin, ptr::{null, null_mut},
+    path::PathBuf,
+    ptr::null_mut,
 };
 use tokio::{
-    time,
-    time::{ Duration, Instant },
+    time::Duration,
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use crate::mandelbrot;
+use crate::mandelbrot::{self, MandelbrotSetWithHistogram};
 use crate::mathutils;
 
 type Real = f64;
@@ -39,7 +42,9 @@ pub struct MainApp {
     w: u32, h: u32,
     selection_center: Option<Point>,
     selection: Option<Rect>,
+    palette: Vec<(u8, u8, u8)>,
     sector: mandelbrot::Sector<Real>,
+    mandelbrot_set: mandelbrot::MandelbrotSetWithHistogram,
 }
 
 impl TryFrom<Canvas<Window>> for MainApp {
@@ -60,12 +65,14 @@ impl TryFrom<Canvas<Window>> for MainApp {
             w, h,
             selection_center: None,
             selection: None,
+            palette: vec![(0, 0, 0), (255,255, 255)],
             sector: mandelbrot::Sector::new(
                 - Real::from(w / 2) * scale,
                 - Real::from(h / 2) * scale,
                 scale,
                 w as usize, h as usize
             ),
+            mandelbrot_set: Default::default(),
         })
     }
 }
@@ -118,6 +125,33 @@ impl sdl_app::App for MainApp {
 
     fn sdl_event(&mut self, event: Event) {
         match event {
+            Event::KeyUp { keycode: Some(keycode), .. } => {
+                match keycode {
+                    Keycode::P => {
+                        tokio::spawn(async {
+                            if let Some(palettefile) = 
+                                choose_palette().await {
+                                let palette_load_result =
+                                    gimp_palette::Palette::read_from_file(palettefile.clone())
+                                    .map(|p| p
+                                        .get_colors()
+                                        .iter()
+                                        .map(|c| (c.r, c.g, c.b))
+                                        .collect::<Vec<(u8, u8, u8)>>()
+                                    )
+                                    .map_err(|_e| format!(
+                                        "Error loading palette from {}",
+                                        palettefile.to_string_lossy()
+                                    ));
+                                sdl_dispatch::send::<PaletteChanged>(
+                                    PaletteChanged { palette_load_result }
+                                );
+                            }
+                        });
+                    },
+                    _ => {}
+                }
+            },
             Event::MouseButtonDown{ mouse_btn: MouseButton::Left, x, y, ..} => {
                 self.selection_center = Some(Point::new(x, y))
             },
@@ -158,7 +192,10 @@ impl sdl_app::App for MainApp {
 struct ResizeTexture {}
 struct Redraw {}
 struct MandelbrotReady {
-    buf: Vec<(u8, u8, u8)>,
+    mandelbrotset: MandelbrotSetWithHistogram,
+}
+struct PaletteChanged {
+    palette_load_result: Result<Vec<(u8, u8, u8)>, String>,
 }
 
 dispatch_handlers! {
@@ -197,12 +234,13 @@ dispatch_handlers! {
             let sector = self.sector.clone();
             let cancellation_token_clone = cancellation_token.clone();
             async move{
-                if let Some(buf) = sector.compute(
+                if let Some(mandelbrotset) = sector.compute(
                     20000,
-                    &vec![(0, 0, 0), (255, 255, 255)],
                     cancellation_token_clone
                 ).await {
-                    sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(MandelbrotReady{buf})
+                    sdl_dispatch::spawn::<MandelbrotReady, Result<(), String>>(
+                        MandelbrotReady { mandelbrotset }
+                    )
                         .await
                         .map_err(|_| "Task canceled")??;
                 }
@@ -214,34 +252,51 @@ dispatch_handlers! {
 
     fn mandelbrot_ready(&mut self, task: SdlPumpTask<MandelbrotReady, Result<(), String>>) {
         let result: Result<(), String> = (|| {
-            let image = &task.input().buf;
-
-            // Lock texture and copy data
-            _ = self.texture.with_lock(None, |buf, pitch| -> Result<(), String> {
-                for y in 0..self.h as usize {
-                    for x in 0..self.w as usize {
-                        let pixel_index = pitch * y + x * 3;
-                        let mandelbrot_index = self.w as usize * y + x;
-                        (
-                            buf[pixel_index],
-                            buf[pixel_index + 1],
-                            buf[pixel_index + 2]
-                        ) = image[mandelbrot_index];
-                    }
-                }
-
-                Ok(())
-            })?;
-
+            self.mandelbrot_set = task
+                .input()
+                .mandelbrotset
+                .clone();
+            self.update_texture()?;
             self.render()?;
             Ok(())
         })();
 
         task.complete(result);
     }
+
+    fn palette_changed(&mut self, msg: PaletteChanged) {
+        self.palette = msg.palette_load_result.unwrap();
+        self.update_texture();
+        self.render();
+    }
 }
 
 impl MainApp {
+    fn update_texture(&mut self) -> Result<(), String> {
+        let image = self
+            .mandelbrot_set
+            .get_image_from_palette(&self.palette);
+
+        // Lock texture and copy data
+        _ = self.texture.with_lock(None, |buf, pitch| -> Result<(), String> {
+            for y in 0..self.h as usize {
+                for x in 0..self.w as usize {
+                    let pixel_index = pitch * y + x * 3;
+                    let mandelbrot_index = self.w as usize * y + x;
+                    (
+                        buf[pixel_index],
+                        buf[pixel_index + 1],
+                        buf[pixel_index + 2]
+                    ) = image[mandelbrot_index];
+                }
+            }
+
+            Ok(())
+        })?;
+        
+        Ok(())
+    }
+
     fn render(&mut self) -> Result<(), String> {
         self.canvas.clear();
         self.canvas.copy(&self.texture, None, None)?;
@@ -256,3 +311,11 @@ impl MainApp {
     }
 }
 
+async fn choose_palette() -> Option<PathBuf> {
+    AsyncFileDialog::new()
+        .add_filter("GIMP palettes", &["gpl"])
+        .set_directory("~")
+        .pick_file()
+        .await
+        .map(|x| x.path().to_owned())
+}
