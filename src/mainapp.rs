@@ -92,13 +92,24 @@ impl Drop for MainApp {
 impl sdl_app::App for MainApp {
     /// Application start does simply clear the main window.
     fn start(&mut self) {
+        _ = self.texture.with_lock(None, |buf, _| -> Result<(), String> {
+            for b in buf {
+                *b = 0;
+            }
+
+            Ok(())
+        });
         self.canvas.clear();
         self.canvas.present();
     }
 
-    /// When the application is resized we launch an asynchronous
-    /// wait of 1 second, aborting any other task.
+    /// This handler:
+    /// * Aborts any running computation
+    /// * Launches a new asynchronous wait of 1 second.
+    /// * Refreshes the window with the currently
+    ///   available texture.
     fn resized(&mut self) {
+        (self.w, self.h) = self.canvas.output_size().unwrap();
         if let Some((task, token)) = self.mandelbrot_task.take() {
             token.cancel();
             task.abort();
@@ -107,20 +118,15 @@ impl sdl_app::App for MainApp {
         self.resize_timer = Some(Ticker::once(
             Duration::from_millis(1000),
             || {
-/*                async {
-                    sdl_dispatch::spawn::<ResizeTexture, Result<(), String>>(ResizeTexture{}).await
-                        .map_err(|e| e.to_string())??;
-                    Result::<(), String>::Ok(())
-                }*/
-
                 sdl_dispatch::send::<ResizeTexture>(ResizeTexture{});
             }
         ));
+        self.render();
     }
 
     /// Stop should handle the return value to the main loop.
     fn stop(&mut self) {
-
+        // TODO: Refactor the trait
     }
 
     fn sdl_event(&mut self, event: Event) {
@@ -169,8 +175,13 @@ impl sdl_app::App for MainApp {
             },
             Event::MouseButtonUp{mouse_btn: MouseButton::Left, x, y, ..} => {
                 if let Some(center) = self.selection_center {
+                    // self.selection is in window-coordinates,
+                    // we invert y to get complex plane coordinates.
                     let selection = mathutils::selection_from_center_with_ratio(
-                        center,
+                        Point::new(
+                            center.x,
+                            self.h as i32 - center.y
+                        ),
                         Point::new(x, self.h as i32 - y),
                         self.w as f32 / self.h as f32
                     );
@@ -203,7 +214,6 @@ dispatch_handlers! {
 
     fn resize_texture(&mut self, task: ResizeTexture) {
         let _ = (|| -> Result<(), String> {
-            (self.w, self.h) = self.canvas.output_size()?;
         
             self.sector = self.sector.fit_size(self.w as usize, self.h as usize);
 
@@ -279,9 +289,11 @@ impl MainApp {
 
         // Lock texture and copy data
         _ = self.texture.with_lock(None, |buf, pitch| -> Result<(), String> {
-            for y in 0..self.h as usize {
+            for (y, y_tex) in
+                (0..self.h as usize)
+                .zip((0..self.h as usize).rev()) {
                 for x in 0..self.w as usize {
-                    let pixel_index = pitch * y + x * 3;
+                    let pixel_index = pitch * y_tex + x * 3;
                     let mandelbrot_index = self.w as usize * y + x;
                     (
                         buf[pixel_index],
@@ -299,7 +311,21 @@ impl MainApp {
 
     fn render(&mut self) -> Result<(), String> {
         self.canvas.clear();
-        self.canvas.copy(&self.texture, None, None)?;
+        let (w, h) = {
+            let q = self
+                .texture
+                .query();
+            (q.width, q.height)
+        };
+        self.canvas.copy(
+            &self.texture,
+            None,
+            Rect::new(
+                (self.w as i32 - w as i32) >> 1,
+                (self.h as i32 - h as i32) >> 1,
+                w, h
+            )
+        )?;
 
         if let Some(rect) = self.selection {
             self.canvas.set_draw_color(Color::RGB(255, 0, 0));
