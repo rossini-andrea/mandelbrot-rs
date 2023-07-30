@@ -205,14 +205,6 @@ dispatch_handlers! {
         let _ = (|| -> Result<(), String> {
             (self.w, self.h) = self.canvas.output_size()?;
         
-            unsafe {
-                mem::replace(
-                    &mut self.texture,
-                    self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
-                        .map_err(|e| e.to_string())?
-                ).destroy();
-            }
-
             self.sector = self.sector.fit_size(self.w as usize, self.h as usize);
 
             sdl_dispatch::send::<Redraw>(Redraw{});
@@ -252,6 +244,14 @@ dispatch_handlers! {
 
     fn mandelbrot_ready(&mut self, task: SdlPumpTask<MandelbrotReady, Result<(), String>>) {
         let result: Result<(), String> = (|| {
+            unsafe {
+                mem::replace(
+                    &mut self.texture,
+                    self.texture_creator.create_texture_streaming(PixelFormatEnum::RGB24, self.w, self.h)
+                        .map_err(|e| e.to_string())?
+                ).destroy();
+            }
+
             self.mandelbrot_set = task
                 .input()
                 .mandelbrotset
